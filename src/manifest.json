@@ -1,0 +1,32 @@
+{
+  "name": "减脂记录",
+  "appid": "__UNI__FATLOSS",
+  "description": "跨 Android 与微信小程序的减脂记录技术纵向样片",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "uniStatistics": {
+    "enable": false
+  },
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    }
+  },
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  },
+  "h5": {
+    "title": "减脂记录"
+  }
+}

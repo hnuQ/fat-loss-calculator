@@ -1,0 +1,8 @@
+node_modules/
+dist/
+unpackage/
+coverage/
+output/playwright/
+*.log
+.DS_Store
+Thumbs.db
