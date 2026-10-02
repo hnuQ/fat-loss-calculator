@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import { fatLossDiary } from "../../application/runtime";
 import WeightTrendCanvas from "../../components/WeightTrendCanvas.vue";
 import FoodLibrary from "../../components/FoodLibrary.vue";
+import MealDiary from "../../components/MealDiary.vue";
 import type {
   DiarySnapshot,
   FatLossCycle,
   Food,
-  MealSlot,
   WeightTrend,
 } from "../../domain/diary";
 import type { DayType, Sex, WeeklyExercise } from "../../domain/nutrition";
@@ -32,20 +32,15 @@ const experienceOptions: Array<{ label: string; value: boolean }> = [
   { label: "有减脂基础", value: true },
   { label: "无减脂基础", value: false },
 ];
-const mealOptions: Array<{ label: string; value: MealSlot }> = [
-  { label: "早餐", value: "breakfast" },
-  { label: "午加餐", value: "morning-snack" },
-  { label: "午餐", value: "lunch" },
-  { label: "晚加餐", value: "evening-snack" },
-  { label: "晚餐", value: "dinner" },
-  { label: "练后餐", value: "post-workout" },
-];
-
 const snapshot = ref<DiarySnapshot>();
 const trend = ref<WeightTrend>();
 const busy = ref(false);
 const message = ref("");
-const selectedMealIndex = ref(0);
+const selectedGroup = ref("breakfast");
+const visibleGroups = computed(() => snapshot.value?.mealGroups.filter((group) => !group.hidden) ?? []);
+watch(visibleGroups, (groups) => {
+  if (!groups.some((group) => group.id === selectedGroup.value)) selectedGroup.value = groups[0]?.id ?? "";
+});
 const weightKg = ref("");
 const platform = fatLossDiary.getPlatformCapabilities();
 
@@ -87,23 +82,13 @@ const actualPercentage = computed(() => {
   return baseline > 0 ? Math.min(100, Math.round((actual / baseline) * 100)) : 0;
 });
 
-const energyStatus = computed(() => {
-  const baseline = snapshot.value?.baseline?.energyKcal ?? 0;
-  const actual = snapshot.value?.actual.energyKcal ?? 0;
-  if (!baseline || actual < baseline * 0.9) return "low";
-  if (actual > baseline * 1.1) return "high";
-  return "within";
-});
+const energyStatus = computed(() => snapshot.value?.energyStatus);
 
 function setPickerValue<T>(
   event: { detail: { value: string | number } },
   options: Array<{ value: T }>,
 ): T {
   return options[Number(event.detail.value)].value;
-}
-
-function setMeal(event: { detail: { value: string | number } }): void {
-  selectedMealIndex.value = Number(event.detail.value);
 }
 
 function toRequiredNumber(value: string): number {
@@ -255,15 +240,17 @@ async function viewCycle(cycle: FatLossCycle): Promise<void> {
 }
 
 async function addFood(food: Food, amount: number): Promise<void> {
+  if (!canRecordToday.value || !selectedGroup.value || busy.value) return;
   busy.value = true;
   message.value = "";
   try {
     snapshot.value = await fatLossDiary.saveMeal({
-      mealSlot: mealOptions[selectedMealIndex.value].value,
+      mealSlot: selectedGroup.value,
       foodId: food.id,
       amount,
+      date: snapshot.value?.selectedDate,
     });
-    message.value = `${food.name} 已保存到${mealOptions[selectedMealIndex.value].label}`;
+    message.value = `${food.name} 已保存到${visibleGroups.value.find((group) => group.id === selectedGroup.value)?.name}`;
   } catch (error) {
     message.value = error instanceof Error ? error.message : "保存餐食失败";
   } finally {
@@ -490,7 +477,7 @@ onMounted(async () => {
             :key="option.value"
             class="day-type-button"
             :class="{ selected: option.value === snapshot.dayType }"
-            :disabled="busy"
+            :disabled="busy || snapshot.selectedDate < snapshot.today"
             @click="chooseDayType(option.value)"
           >
             {{ option.label }}
@@ -516,7 +503,7 @@ onMounted(async () => {
           <text>营养基准 {{ snapshot.baseline?.energyKcal }} kcal</text>
           <text>用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.energyKcal} kcal` : '未设置' }}</text>
           <text>实际摄入 {{ snapshot.actual.energyKcal }} kcal</text>
-          <text>剩余 {{ snapshot.remaining?.energyKcal }} kcal</text>
+          <text>剩余额 {{ snapshot.remaining?.energyKcal }} kcal</text>
         </view>
       </view>
 
@@ -525,36 +512,26 @@ onMounted(async () => {
           <text>碳水</text>
           <text class="macro-value">实际 {{ snapshot.actual.carbohydrateGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.carbohydrateGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.carbohydrateGrams}g` : '未设置' }}</text>
+          <text class="macro-meta">剩余额 {{ snapshot.remaining?.carbohydrateGrams }}g</text>
         </view>
         <view class="macro-card">
           <text>蛋白质</text>
           <text class="macro-value">实际 {{ snapshot.actual.proteinGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.proteinGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.proteinGrams}g` : '未设置' }}</text>
+          <text class="macro-meta">剩余额 {{ snapshot.remaining?.proteinGrams }}g</text>
         </view>
         <view class="macro-card">
           <text>脂肪</text>
           <text class="macro-value">实际 {{ snapshot.actual.fatGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.fatGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.fatGrams}g` : '未设置' }}</text>
+          <text class="macro-meta">剩余额 {{ snapshot.remaining?.fatGrams }}g</text>
         </view>
       </view>
 
-      <view v-if="canRecordToday && snapshot.baseline" class="card">
-        <text class="card-title">所选餐次</text>
-        <label class="field compact">
-          <text>餐次</text>
-          <picker :range="mealOptions" range-key="label" @change="setMeal">
-            <view class="picker-value">{{ mealOptions[selectedMealIndex].label }}</view>
-          </picker>
-        </label>
-        <view v-if="snapshot.meals.length" class="meal-list">
-          <view v-for="meal in snapshot.meals" :key="meal.id" class="meal-row">
-            <text>{{ mealOptions.find((item) => item.value === meal.mealSlot)?.label }} · {{ meal.foodName }}</text>
-            <text>{{ meal.amount }}{{ meal.unit === 'g' ? 'g' : '个' }} / {{ meal.nutrients.energyKcal }} kcal</text>
-          </view>
-        </view>
-      </view>
+      <MealDiary v-if="snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!(canRecordToday && snapshot.baseline)" :disabled="busy" :selected-group="selectedGroup" @change="snapshot = $event" @select="selectedGroup = $event" @working="busy = $event" />
+      <text v-if="canRecordToday && snapshot.baseline" class="section-title">录入餐次：{{ visibleGroups.find((group) => group.id === selectedGroup)?.name ?? '请先显示或新增餐次' }}</text>
 
-      <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline)" :disabled="busy" @add="addFood" />
+      <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" @add="addFood" />
 
       <view v-if="snapshot.selectedCycle" class="card">
         <text class="card-title">90 天体重趋势</text>
@@ -890,7 +867,7 @@ page {
 .macro-value {
   display: block;
   margin-top: 10rpx;
-  color: #315e47;
+  color: #435149;
   font-size: 22rpx;
   font-weight: 600;
 }

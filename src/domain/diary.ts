@@ -78,12 +78,31 @@ export interface MealRecord {
   id: string;
   cycleId?: string;
   date: string;
-  mealSlot: MealSlot;
+  mealSlot: string;
   foodId: string;
   foodName: string;
   amount: number;
   unit: Food["unit"];
   nutrients: Nutrients;
+  /** 保存时的单位营养快照；旧版记录可由已保存数量与营养反推。 */
+  foodSnapshot?: Food;
+}
+
+export interface MealGroup {
+  id: string;
+  name: string;
+  hidden: boolean;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  deletedAt?: string;
+  syncState: "local";
+}
+
+export interface MealSummary extends MealGroup {
+  meals: MealRecord[];
+  actual: Nutrients;
 }
 
 export interface WeightRecord {
@@ -94,6 +113,7 @@ export interface WeightRecord {
 }
 
 export interface DiaryState {
+  mealGroups?: MealGroup[];
   foodLibrary?: FoodLibraryState;
   profile?: HealthProfile;
   cycles?: FatLossCycle[];
@@ -136,6 +156,8 @@ export interface PlatformCapabilities {
 }
 
 export interface DiarySnapshot {
+  mealGroups: MealSummary[];
+  energyStatus?: "low" | "within" | "high";
   profile?: HealthProfile;
   cycles: FatLossCycle[];
   activeCycle?: FatLossCycle;

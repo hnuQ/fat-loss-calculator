@@ -7,7 +7,8 @@ import type {
   FatLossCycle,
   Food,
   HealthProfile,
-  MealSlot,
+  MealRecord,
+  MealGroup,
   Nutrients,
   PlatformCapabilities,
   WeightTrend,
@@ -30,6 +31,7 @@ import {
   type NutritionBaselineInput,
 } from "../domain/nutrition";
 import { buildWeightTrend } from "../domain/weightTrend";
+import { calorieStatus, defaultMealGroups, mealGroupName, sumNutrients } from "../domain/meals";
 
 type UserTargetInput = Omit<Nutrients, "energyKcal">;
 type EstablishProfileInput = Omit<HealthProfile, "cycleStartDate"> & {
@@ -39,9 +41,10 @@ type EstablishProfileInput = Omit<HealthProfile, "cycleStartDate"> & {
 };
 
 export interface SaveMealInput {
-  mealSlot: MealSlot;
+  mealSlot: string;
   foodId: string;
   amount: number;
+  date?: string;
 }
 
 export interface DiaryDateSelection {
@@ -61,6 +64,10 @@ export interface FatLossDiary {
   openDiary(selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   searchFoods(query: string): Food[];
   saveMeal(input: SaveMealInput): Promise<DiarySnapshot>;
+  updateMeal(input: { id: string; amount: number; mealSlot: string }): Promise<DiarySnapshot>;
+  deleteMeal(id: string): Promise<DiarySnapshot>;
+  addMealGroup(name: string, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
+  configureMealGroup(input: { id: string; name: string; hidden: boolean }, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   recordWeight(input: { weightKg: number }): Promise<DiarySnapshot>;
   readWeightTrend(cycleId?: string): Promise<WeightTrend>;
   getPlatformCapabilities(): PlatformCapabilities;
@@ -74,17 +81,11 @@ interface Dependencies {
   buildTrend?: WeightTrendBuilder;
 }
 
-type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords"> & {
+type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords" | "mealGroups"> & {
+  mealGroups: MealGroup[];
   cycles: FatLossCycle[];
   dayTypeRecords: DayTypeRecord[];
 };
-
-const emptyNutrients = (): Nutrients => ({
-  carbohydrateGrams: 0,
-  proteinGrams: 0,
-  fatGrams: 0,
-  energyKcal: 0,
-});
 
 function roundToOneDecimal(value: number): number {
   return Math.round((value + Number.EPSILON * Math.abs(value)) * 10) / 10;
@@ -118,22 +119,6 @@ function normalizeUserTarget(input?: UserTargetInput): Nutrients | undefined {
   return { ...target, energyKcal: calculateEnergyKcal(target) };
 }
 
-function sumNutrients(items: Nutrients[]): Nutrients {
-  return items.reduce(
-    (total, item) => ({
-      carbohydrateGrams: roundToOneDecimal(
-        total.carbohydrateGrams + item.carbohydrateGrams,
-      ),
-      proteinGrams: roundToOneDecimal(
-        total.proteinGrams + item.proteinGrams,
-      ),
-      fatGrams: roundToOneDecimal(total.fatGrams + item.fatGrams),
-      energyKcal: roundToOneDecimal(total.energyKcal + item.energyKcal),
-    }),
-    emptyNutrients(),
-  );
-}
-
 function cycleContains(cycle: FatLossCycle, date: string): boolean {
   return isDateWithin(date, cycle.startDate, cycle.endDate);
 }
@@ -155,6 +140,17 @@ function normalizeState(
 ): { state: NormalizedDiaryState; changed: boolean } {
   const state = (stored ?? { meals: [], weights: [] }) as NormalizedDiaryState;
   let changed = false;
+  if (!Array.isArray(state.mealGroups)) {
+    state.mealGroups = defaultMealGroups();
+    changed = true;
+  }
+  for (const group of state.mealGroups) {
+    if (!group.ownerId) {
+      const timestamp = new Date().toISOString();
+      Object.assign(group, { ownerId: "local-user", createdAt: timestamp, updatedAt: timestamp, revision: 1, syncState: "local" });
+      changed = true;
+    }
+  }
 
   if (!Array.isArray(state.meals)) {
     state.meals = [];
@@ -236,6 +232,21 @@ async function readState(
 
 function activeCycleOf(state: NormalizedDiaryState): FatLossCycle | undefined {
   return state.cycles.find((cycle) => cycle.status === "active");
+}
+
+function assertMealGroup(state: NormalizedDiaryState, id: string): void {
+  const group = state.mealGroups.find((candidate) => candidate.id === id);
+  if (!group || group.hidden) throw new Error("请选择可见餐次");
+}
+
+function editableMeal(state: NormalizedDiaryState, id: string, today: string): MealRecord {
+  const meal = state.meals.find((record) => record.id === id);
+  if (!meal) throw new Error("未找到餐食记录");
+  const cycle = activeCycleOf(state);
+  if (meal.date !== today || !cycle || meal.cycleId !== cycle.id) {
+    throw new Error("历史餐食和已归档周期只能查看，不能覆盖或删除");
+  }
+  return meal;
 }
 
 function findSelectedCycle(
@@ -344,6 +355,11 @@ function toSnapshot(
     : undefined;
 
   return {
+    mealGroups: state.mealGroups.map((group) => {
+      const groupMeals = meals.filter((meal) => meal.mealSlot === group.id);
+      return { ...group, meals: groupMeals, actual: sumNutrients(groupMeals.map((meal) => meal.nutrients)) };
+    }),
+    energyStatus: dayTypeRecord ? calorieStatus(actual.energyKcal, dayTypeRecord.baseline.energyKcal) : undefined,
     profile: state.profile,
     cycles: state.cycles,
     activeCycle: activeCycleOf(state),
@@ -545,6 +561,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       if (!cycleContains(cycle, input.date)) {
         throw new Error("所选日期不在该减脂周期内");
       }
+      if (input.date < today) throw new Error("历史日期只能查看，不能覆盖日型和营养基准");
 
       const nextRecord: DayTypeRecord = {
         cycleId: cycle.id,
@@ -584,7 +601,9 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
 
     async saveMeal(input) {
       const today = dependencies.clock.today();
+      if (input.date && input.date !== today) throw new Error("只能新增今天的餐食记录");
       const state = await readState(dependencies.repository, today);
+      assertMealGroup(state, input.mealSlot);
       const library = libraryState(state.foodLibrary);
       const food = availableFoods(library).find((candidate) => candidate.id === input.foodId);
       if (!food) throw new Error(`未找到食材：${input.foodId}`);
@@ -603,7 +622,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       }
 
       state.meals.push({
-        id: `${cycle.id}-${today}-meal-${state.meals.length + 1}`,
+        id: `meal-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         cycleId: cycle.id,
         date: today,
         mealSlot: input.mealSlot,
@@ -612,11 +631,68 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         amount: input.amount,
         unit: food.unit,
         nutrients,
+        foodSnapshot: { ...food, nutrients: { ...food.nutrients } },
       });
       recordFoodUse(library, food.id);
       state.foodLibrary = library;
       await dependencies.repository.write(state);
       return toSnapshot(state, today, { cycleId: cycle.id, date: today });
+    },
+
+    async updateMeal(input) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const meal = editableMeal(state, input.id, today);
+      assertMealGroup(state, input.mealSlot);
+      const food = meal.foodSnapshot ?? {
+        id: meal.foodId, name: meal.foodName, unit: meal.unit,
+        baseAmount: meal.amount, nutrients: { ...meal.nutrients },
+      };
+      const nutrients = scaleFoodNutrients(food, input.amount);
+      meal.foodSnapshot = food;
+      meal.amount = input.amount;
+      meal.mealSlot = input.mealSlot;
+      meal.nutrients = nutrients;
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: meal.cycleId, date: today });
+    },
+
+    async deleteMeal(id) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const meal = editableMeal(state, id, today);
+      state.meals = state.meals.filter((record) => record.id !== id);
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: meal.cycleId, date: today });
+    },
+
+    async addMealGroup(name, selection = {}) {
+      const today = dependencies.clock.today();
+      const validatedName = mealGroupName(name);
+      const state = await readState(dependencies.repository, today);
+      const timestamp = new Date().toISOString();
+      state.mealGroups.push({
+        id: `group-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name: validatedName, hidden: false, ownerId: "local-user",
+        createdAt: timestamp, updatedAt: timestamp, revision: 1, syncState: "local",
+      });
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, selection);
+    },
+
+    async configureMealGroup(input, selection = {}) {
+      const today = dependencies.clock.today();
+      const name = mealGroupName(input.name);
+      if (typeof input.hidden !== "boolean") throw new Error("请明确选择餐次是否隐藏");
+      const state = await readState(dependencies.repository, today);
+      const group = state.mealGroups.find((candidate) => candidate.id === input.id);
+      if (!group) throw new Error("未找到餐次");
+      group.name = name;
+      group.hidden = input.hidden;
+      group.updatedAt = new Date().toISOString();
+      group.revision += 1;
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, selection);
     },
 
     async recordWeight(input) {
