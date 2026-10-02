@@ -22,7 +22,26 @@ export interface HealthProfile {
   weeklyExercise: WeeklyExercise;
   hasFatLossExperience: boolean;
   targetWeightKg?: number;
-  cycleStartDate: string;
+  /** @deprecated 仅用于迁移 Issue #4 创建的本地状态。 */
+  cycleStartDate?: string;
+}
+
+export type CycleStatus = "active" | "archived";
+
+export interface FatLossCycle {
+  id: string;
+  startDate: string;
+  endDate: string;
+  status: CycleStatus;
+  archivedAt?: string;
+  archiveReason?: "completed" | "early";
+}
+
+export interface DayTypeRecord {
+  cycleId: string;
+  date: string;
+  dayType: DayType;
+  baseline: NutritionBaseline;
 }
 
 export interface Nutrients {
@@ -42,6 +61,7 @@ export interface Food {
 
 export interface MealRecord {
   id: string;
+  cycleId?: string;
   date: string;
   mealSlot: MealSlot;
   foodId: string;
@@ -53,13 +73,18 @@ export interface MealRecord {
 
 export interface WeightRecord {
   id: string;
+  cycleId?: string;
   date: string;
   weightKg: number;
 }
 
 export interface DiaryState {
   profile?: HealthProfile;
+  cycles?: FatLossCycle[];
+  dayTypeRecords?: DayTypeRecord[];
+  /** @deprecated 仅用于迁移 Issue #4 创建的本地状态。 */
   dayType?: DayType;
+  /** @deprecated 仅用于迁移 Issue #4 创建的本地状态。 */
   baseline?: NutritionBaseline;
   userTarget?: Nutrients;
   meals: MealRecord[];
@@ -96,11 +121,20 @@ export interface PlatformCapabilities {
 
 export interface DiarySnapshot {
   profile?: HealthProfile;
+  cycles: FatLossCycle[];
+  activeCycle?: FatLossCycle;
+  selectedCycle?: FatLossCycle;
+  today: string;
+  selectedDate: string;
+  dateStrip: string[];
+  cycleDates: string[];
+  isBlankDate: boolean;
   dayType?: DayType;
   baseline?: NutritionBaseline;
   userTarget?: Nutrients;
   meals: MealRecord[];
   weights: WeightRecord[];
+  selectedDateWeights: WeightRecord[];
   bmi?: number;
   actual: Nutrients;
   remaining?: Nutrients;

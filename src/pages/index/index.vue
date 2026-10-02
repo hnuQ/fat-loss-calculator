@@ -5,6 +5,7 @@ import { fatLossDiary } from "../../application/runtime";
 import WeightTrendCanvas from "../../components/WeightTrendCanvas.vue";
 import type {
   DiarySnapshot,
+  FatLossCycle,
   Food,
   MealSlot,
   WeightTrend,
@@ -59,11 +60,28 @@ const form = reactive({
   weeklyExercise: "" as WeeklyExercise | "",
   hasFatLossExperience: undefined as boolean | undefined,
   targetWeightKg: "",
-  dayType: "" as DayType | "",
   userCarbohydrateGrams: "",
   userProteinGrams: "",
   userFatGrams: "",
 });
+
+const cycleForm = reactive({
+  startDate: "",
+  dayType: "" as DayType | "",
+});
+
+const heroTitle = computed(() => {
+  if (!snapshot.value?.selectedCycle) return "今天";
+  return snapshot.value.selectedDate === snapshot.value.today
+    ? "今天"
+    : snapshot.value.selectedDate;
+});
+
+const canRecordToday = computed(
+  () =>
+    snapshot.value?.selectedCycle?.id === snapshot.value?.activeCycle?.id &&
+    snapshot.value?.selectedDate === snapshot.value?.today,
+);
 
 const actualPercentage = computed(() => {
   const baseline = snapshot.value?.baseline?.energyKcal ?? 0;
@@ -117,8 +135,11 @@ function buildUserTarget() {
 
 async function refresh(): Promise<void> {
   snapshot.value = await fatLossDiary.openDiary();
-  if (snapshot.value.profile) {
-    trend.value = await fatLossDiary.readWeightTrend();
+  cycleForm.startDate ||= snapshot.value.today;
+  if (snapshot.value.selectedCycle) {
+    trend.value = await fatLossDiary.readWeightTrend(
+      snapshot.value.selectedCycle.id,
+    );
   }
 }
 
@@ -135,16 +156,104 @@ async function establishProfile(): Promise<void> {
       weeklyExercise: form.weeklyExercise as WeeklyExercise,
       hasFatLossExperience: form.hasFatLossExperience as boolean,
       targetWeightKg: toOptionalNumber(form.targetWeightKg),
-      dayType: form.dayType as DayType,
       userTarget: buildUserTarget(),
     });
-    trend.value = await fatLossDiary.readWeightTrend();
-    message.value = "健康档案和营养基准已保存";
+    cycleForm.startDate = snapshot.value.today;
+    message.value = "健康档案已保存，请创建减脂周期";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "建档失败";
   } finally {
     busy.value = false;
   }
+}
+
+function formatMonthDay(date: string): string {
+  return date.slice(5).replace("-", "/");
+}
+
+function weekdayLabel(date: string): string {
+  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  return ["日", "一", "二", "三", "四", "五", "六"][weekday];
+}
+
+async function startCycle(): Promise<void> {
+  busy.value = true;
+  message.value = "";
+  try {
+    snapshot.value = await fatLossDiary.startCycle({
+      startDate: cycleForm.startDate,
+      dayType: cycleForm.dayType as DayType,
+    });
+    trend.value = await fatLossDiary.readWeightTrend(
+      snapshot.value.selectedCycle?.id,
+    );
+    message.value = "90 日减脂周期已创建";
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "创建周期失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function openDate(date: string, cycleId?: string): Promise<void> {
+  try {
+    snapshot.value = await fatLossDiary.openDiary({ date, cycleId });
+    if (snapshot.value.selectedCycle) {
+      trend.value = await fatLossDiary.readWeightTrend(
+        snapshot.value.selectedCycle.id,
+      );
+    }
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "切换日期失败";
+  }
+}
+
+async function chooseCalendarDate(event: {
+  detail: { value: string | number };
+}): Promise<void> {
+  await openDate(String(event.detail.value), snapshot.value?.selectedCycle?.id);
+}
+
+async function chooseDayType(dayType: DayType): Promise<void> {
+  if (!snapshot.value?.activeCycle) return;
+  busy.value = true;
+  message.value = "";
+  try {
+    snapshot.value = await fatLossDiary.setDayType({
+      cycleId: snapshot.value.activeCycle.id,
+      date: snapshot.value.selectedDate,
+      dayType,
+    });
+    message.value = "日型和营养基准已保存";
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "保存日型失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function archiveCycle(): Promise<void> {
+  busy.value = true;
+  message.value = "";
+  try {
+    snapshot.value = await fatLossDiary.archiveActiveCycle();
+    cycleForm.startDate = snapshot.value.today;
+    cycleForm.dayType = "";
+    message.value = "减脂周期已提前归档，可开始新周期";
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "归档周期失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function viewCycle(cycle: FatLossCycle): Promise<void> {
+  const today = snapshot.value?.today;
+  const date =
+    today && today >= cycle.startDate && today <= cycle.endDate
+      ? today
+      : cycle.startDate;
+  await openDate(date, cycle.id);
 }
 
 function searchFoods(): void {
@@ -199,7 +308,7 @@ onMounted(async () => {
   <view class="page-shell">
     <view class="hero">
       <text class="eyebrow">90 天减脂记录</text>
-      <text class="title">今天</text>
+      <text class="title">{{ heroTitle }}</text>
       <text class="subtitle">只记录计算结果、实际摄入和真实体重</text>
     </view>
 
@@ -207,7 +316,7 @@ onMounted(async () => {
 
     <view v-if="!snapshot?.profile" class="card">
       <text class="card-title">首次启动 · 建立健康档案</text>
-      <text class="onboarding-copy">第 1 步：填写健康档案。带 * 的字段必须填写，缺失时不会计算。</text>
+      <text class="onboarding-copy">填写健康档案。带 * 的字段必须填写，缺失时不会保存。</text>
       <label class="field">
         <text>昵称 *</text>
         <input v-model="form.nickname" placeholder="请输入昵称" />
@@ -264,17 +373,6 @@ onMounted(async () => {
           <input v-model="form.targetWeightKg" type="digit" placeholder="可选" />
         </label>
       </view>
-      <text class="section-title">第 2 步：选择计算日型</text>
-      <label class="field">
-        <text>日型 *</text>
-        <picker
-          :range="dayTypeOptions"
-          range-key="label"
-          @change="form.dayType = setPickerValue($event, dayTypeOptions)"
-        >
-          <view class="picker-value">{{ dayTypeOptions.find((item) => item.value === form.dayType)?.label ?? '请选择日型' }}</view>
-        </picker>
-      </label>
       <text class="section-title">可选用户目标</text>
       <text class="onboarding-copy">如需记录自己的营养目标，请完整填写三项；它不会覆盖营养基准。</text>
       <view class="target-grid">
@@ -292,7 +390,7 @@ onMounted(async () => {
         </label>
       </view>
       <button class="primary-button" :loading="busy" @click="establishProfile">
-        保存并计算营养基准
+        保存健康档案
       </button>
     </view>
 
@@ -309,7 +407,111 @@ onMounted(async () => {
         </view>
       </view>
 
-      <view class="card energy-card" :class="`status-${energyStatus}`">
+      <view v-if="!snapshot.activeCycle" class="card cycle-card">
+        <text class="card-title">开始 90 日减脂周期</text>
+        <text class="onboarding-copy">选择开始日期和首日日型。一个时间只能有一个进行中的周期。</text>
+        <label class="field">
+          <text>周期开始日期 *</text>
+          <picker mode="date" :value="cycleForm.startDate" @change="cycleForm.startDate = String($event.detail.value)">
+            <view class="picker-value">{{ cycleForm.startDate || '请选择开始日期' }}</view>
+          </picker>
+        </label>
+        <label class="field">
+          <text>首日日型 *</text>
+          <picker
+            :range="dayTypeOptions"
+            range-key="label"
+            @change="cycleForm.dayType = setPickerValue($event, dayTypeOptions)"
+          >
+            <view class="picker-value">{{ dayTypeOptions.find((item) => item.value === cycleForm.dayType)?.label ?? '请选择日型' }}</view>
+          </picker>
+        </label>
+        <button class="primary-button" :loading="busy" @click="startCycle">创建周期</button>
+      </view>
+
+      <view v-else class="card cycle-card">
+        <view class="cycle-heading">
+          <view>
+            <text class="card-title">进行中的减脂周期</text>
+            <text class="profile-meta">{{ snapshot.activeCycle.startDate }} 至 {{ snapshot.activeCycle.endDate }}</text>
+          </view>
+          <view class="cycle-actions">
+            <button
+              v-if="snapshot.selectedCycle?.id !== snapshot.activeCycle.id"
+              class="calendar-button"
+              @click="viewCycle(snapshot.activeCycle)"
+            >
+              查看进行中
+            </button>
+            <button class="archive-button" :disabled="busy" @click="archiveCycle">提前归档</button>
+          </view>
+        </view>
+      </view>
+
+      <view v-if="snapshot.cycles.some((cycle) => cycle.status === 'archived')" class="card">
+        <text class="card-title">已归档周期</text>
+        <button
+          v-for="cycle in snapshot.cycles.filter((item) => item.status === 'archived')"
+          :key="cycle.id"
+          class="history-button"
+          @click="viewCycle(cycle)"
+        >
+          {{ cycle.startDate }} 至 {{ cycle.endDate }} · 查看
+        </button>
+      </view>
+
+      <view v-if="snapshot.selectedCycle" class="card calendar-card">
+        <view class="cycle-heading">
+          <view>
+            <text class="card-title">{{ snapshot.selectedCycle.status === 'active' ? '进行中' : '已归档' }}周期日期</text>
+            <text class="profile-meta">当前查看 {{ snapshot.selectedDate }}</text>
+          </view>
+          <picker
+            mode="date"
+            :value="snapshot.selectedDate"
+            :start="snapshot.selectedCycle.startDate"
+            :end="snapshot.selectedCycle.endDate"
+            @change="chooseCalendarDate"
+          >
+            <view class="calendar-button">完整日历</view>
+          </picker>
+        </view>
+        <view class="date-strip">
+          <button
+            v-for="date in snapshot.dateStrip"
+            :key="date"
+            class="date-button"
+            :class="{ selected: date === snapshot.selectedDate }"
+            @click="openDate(date, snapshot.selectedCycle?.id)"
+          >
+            <text>周{{ weekdayLabel(date) }}</text>
+            <text>{{ formatMonthDay(date) }}</text>
+          </button>
+        </view>
+        <view
+          v-if="snapshot.selectedCycle.id === snapshot.activeCycle?.id"
+          class="day-type-row"
+        >
+          <button
+            v-for="option in dayTypeOptions"
+            :key="option.value"
+            class="day-type-button"
+            :class="{ selected: option.value === snapshot.dayType }"
+            :disabled="busy"
+            @click="chooseDayType(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </view>
+        <text v-else class="profile-meta">日型：{{ dayTypeOptions.find((option) => option.value === snapshot?.dayType)?.label ?? '未记录' }}</text>
+      </view>
+
+      <view v-if="snapshot.selectedCycle && snapshot.isBlankDate" class="card blank-card">
+        <text class="card-title">本日暂无记录</text>
+        <text class="empty-copy">没有日型、营养、餐食或身体记录，保持空白。</text>
+      </view>
+
+      <view v-if="snapshot.baseline" class="card energy-card" :class="`status-${energyStatus}`">
         <view class="energy-ring" :style="{ '--progress': `${actualPercentage * 3.6}deg` }">
           <view class="energy-ring-inner">
             <text class="energy-number">{{ snapshot.actual.energyKcal }}</text>
@@ -325,7 +527,7 @@ onMounted(async () => {
         </view>
       </view>
 
-      <view class="macro-grid">
+      <view v-if="snapshot.baseline" class="macro-grid">
         <view class="macro-card">
           <text>碳水</text>
           <text class="macro-value">实际 {{ snapshot.actual.carbohydrateGrams }}g</text>
@@ -343,7 +545,7 @@ onMounted(async () => {
         </view>
       </view>
 
-      <view class="card">
+      <view v-if="canRecordToday && snapshot.baseline" class="card">
         <text class="card-title">记录餐食</text>
         <view class="search-row">
           <input v-model="searchQuery" class="search-input" placeholder="搜索燕麦、米饭、鸡蛋…" />
@@ -377,9 +579,9 @@ onMounted(async () => {
         </view>
       </view>
 
-      <view class="card">
+      <view v-if="snapshot.selectedCycle" class="card">
         <text class="card-title">90 天体重趋势</text>
-        <view class="search-row">
+        <view v-if="canRecordToday" class="search-row">
           <input v-model="weightKg" class="search-input" type="digit" placeholder="今天的体重（kg）" />
           <button class="secondary-button" :disabled="busy" @click="recordWeight">记录</button>
         </view>
@@ -525,6 +727,94 @@ page {
   border: none;
   color: #ffffff;
   background: #1f7a4c;
+}
+
+.cycle-heading,
+.cycle-actions,
+.date-strip,
+.day-type-row {
+  display: flex;
+  gap: 12rpx;
+  align-items: center;
+}
+
+.cycle-heading {
+  justify-content: space-between;
+}
+
+.cycle-actions {
+  flex: 0 0 auto;
+}
+
+.cycle-heading .card-title {
+  margin-bottom: 8rpx;
+}
+
+.archive-button,
+.calendar-button,
+.history-button,
+.date-button,
+.day-type-button {
+  border: 1rpx solid #dce4de;
+  color: #315e47;
+  background: #f7faf8;
+  font-size: 24rpx;
+}
+
+.archive-button {
+  flex: 0 0 auto;
+  margin: 0;
+  color: #8f4b3f;
+  background: #fff7f5;
+}
+
+.calendar-button {
+  padding: 16rpx 20rpx;
+  border-radius: 16rpx;
+}
+
+.history-button {
+  margin-top: 14rpx;
+  text-align: left;
+}
+
+.date-strip {
+  margin: 28rpx 0;
+  align-items: stretch;
+}
+
+.date-button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4rpx;
+  margin: 0;
+  padding: 12rpx 4rpx;
+  line-height: 1.4;
+}
+
+.date-button.selected,
+.day-type-button.selected {
+  border-color: #1f7a4c;
+  color: #ffffff;
+  background: #1f7a4c;
+}
+
+.day-type-row {
+  align-items: stretch;
+}
+
+.day-type-button {
+  flex: 1;
+  margin: 0;
+  padding: 12rpx 6rpx;
+  line-height: 1.4;
+}
+
+.blank-card {
+  border-style: dashed;
+  box-shadow: none;
 }
 
 .primary-button {
