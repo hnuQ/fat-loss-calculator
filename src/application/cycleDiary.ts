@@ -8,6 +8,7 @@ import type {
   Food,
   HealthProfile,
   MealRecord,
+  MealCorrection,
   MealGroup,
   Nutrients,
   PlatformCapabilities,
@@ -66,6 +67,7 @@ export interface FatLossDiary {
   saveMeal(input: SaveMealInput): Promise<DiarySnapshot>;
   updateMeal(input: { id: string; amount: number; mealSlot: string }): Promise<DiarySnapshot>;
   deleteMeal(id: string): Promise<DiarySnapshot>;
+  correctMeal(input: { id: string; amount: number; reason: string }): Promise<DiarySnapshot>;
   addMealGroup(name: string, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   configureMealGroup(input: { id: string; name: string; hidden: boolean }, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   recordWeight(input: { weightKg: number }): Promise<DiarySnapshot>;
@@ -81,7 +83,8 @@ interface Dependencies {
   buildTrend?: WeightTrendBuilder;
 }
 
-type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords" | "mealGroups"> & {
+type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords" | "mealGroups" | "mealCorrections"> & {
+  mealCorrections: MealCorrection[];
   mealGroups: MealGroup[];
   cycles: FatLossCycle[];
   dayTypeRecords: DayTypeRecord[];
@@ -140,6 +143,10 @@ function normalizeState(
 ): { state: NormalizedDiaryState; changed: boolean } {
   const state = (stored ?? { meals: [], weights: [] }) as NormalizedDiaryState;
   let changed = false;
+  if (!Array.isArray(state.mealCorrections)) {
+    state.mealCorrections = [];
+    changed = true;
+  }
   if (!Array.isArray(state.mealGroups)) {
     state.mealGroups = defaultMealGroups();
     changed = true;
@@ -243,10 +250,25 @@ function editableMeal(state: NormalizedDiaryState, id: string, today: string): M
   const meal = state.meals.find((record) => record.id === id);
   if (!meal) throw new Error("未找到餐食记录");
   const cycle = activeCycleOf(state);
-  if (meal.date !== today || !cycle || meal.cycleId !== cycle.id) {
+  if (meal.date !== today || !cycle || meal.cycleId !== cycle.id || state.mealCorrections.some((correction) => correction.sourceMealId === id)) {
     throw new Error("历史餐食和已归档周期只能查看，不能覆盖或删除");
   }
   return meal;
+}
+
+function effectiveMeal(state: NormalizedDiaryState, source: MealRecord): MealRecord {
+  return [...state.mealCorrections].reverse().find((correction) => correction.sourceMealId === source.id)?.corrected ?? source;
+}
+
+function savedFood(meal: MealRecord): Food {
+  return meal.foodSnapshot ?? {
+    id: meal.foodId, name: meal.foodName, unit: meal.unit,
+    baseAmount: meal.amount, nutrients: { ...meal.nutrients },
+  };
+}
+
+function copyMeal(meal: MealRecord): MealRecord {
+  return JSON.parse(JSON.stringify(meal)) as MealRecord;
 }
 
 function findSelectedCycle(
@@ -329,7 +351,8 @@ function toSnapshot(
   const cycleMeals = selectedCycle
     ? recordsForCycle(state.meals, selectedCycle)
     : [];
-  const meals = cycleMeals.filter((meal) => meal.date === selectedDate);
+  const originalMeals = cycleMeals.filter((meal) => meal.date === selectedDate);
+  const meals = originalMeals.map((meal) => effectiveMeal(state, meal));
   const cycleWeights = selectedCycle
     ? recordsForCycle(state.weights, selectedCycle)
     : [];
@@ -355,6 +378,8 @@ function toSnapshot(
     : undefined;
 
   return {
+    originalMeals,
+    mealCorrections: state.mealCorrections.filter((correction) => originalMeals.some((meal) => meal.id === correction.sourceMealId)),
     mealGroups: state.mealGroups.map((group) => {
       const groupMeals = meals.filter((meal) => meal.mealSlot === group.id);
       return { ...group, meals: groupMeals, actual: sumNutrients(groupMeals.map((meal) => meal.nutrients)) };
@@ -644,10 +669,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       const state = await readState(dependencies.repository, today);
       const meal = editableMeal(state, input.id, today);
       assertMealGroup(state, input.mealSlot);
-      const food = meal.foodSnapshot ?? {
-        id: meal.foodId, name: meal.foodName, unit: meal.unit,
-        baseAmount: meal.amount, nutrients: { ...meal.nutrients },
-      };
+      const food = savedFood(meal);
       const nutrients = scaleFoodNutrients(food, input.amount);
       meal.foodSnapshot = food;
       meal.amount = input.amount;
@@ -664,6 +686,39 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       state.meals = state.meals.filter((record) => record.id !== id);
       await dependencies.repository.write(state);
       return toSnapshot(state, today, { cycleId: meal.cycleId, date: today });
+    },
+
+    async correctMeal(input) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const source = state.meals.find((meal) => meal.id === input.id);
+      if (!source) throw new Error("未找到餐食记录");
+      if (source.date >= today) throw new Error("只能追加已经结束日期的历史纠错");
+      if (typeof input.reason !== "string" || !input.reason.trim()) throw new Error("请填写非空纠错原因");
+      const previous = effectiveMeal(state, source);
+      const food = savedFood(source);
+      const corrected = { ...previous, amount: input.amount, foodSnapshot: food, nutrients: scaleFoodNutrients(food, input.amount) };
+      const dayMeals = state.meals.filter((meal) => meal.date === source.date && meal.cycleId === source.cycleId);
+      const before = sumNutrients(dayMeals.map((meal) => effectiveMeal(state, meal).nutrients)).energyKcal;
+      const after = sumNutrients(dayMeals.map((meal) => meal.id === source.id ? corrected.nutrients : effectiveMeal(state, meal).nutrients)).energyKcal;
+      // 已保存热量精度为 0.1 kcal，整数比较避免浮点数将正好 10% 判成超过。
+      const beforeTenths = Math.round(before * 10);
+      const afterTenths = Math.round(after * 10);
+      if (Math.abs(afterTenths - beforeTenths) * 10 <= beforeTenths) {
+        throw new Error("纠错须使当日有效总热量的绝对变化超过 10%（正好 10% 不允许）");
+      }
+      const prior = [...state.mealCorrections].reverse().find((correction) => correction.sourceMealId === source.id);
+      const timestamp = dependencies.clock.now?.() ?? new Date().toISOString();
+      state.mealCorrections.push({
+        id: `correction-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        ownerId: "local-user", sourceMealId: source.id, previousCorrectionId: prior?.id,
+        original: copyMeal(source), previous: copyMeal(previous), corrected: copyMeal(corrected),
+        previousDayEnergyKcal: before, correctedDayEnergyKcal: after,
+        reason: input.reason.trim(), createdAt: timestamp, updatedAt: timestamp,
+        revision: 1, syncState: "local",
+      });
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: source.cycleId, date: source.date });
     },
 
     async addMealGroup(name, selection = {}) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { reactive, ref, watch } from "vue";
 import { fatLossDiary } from "../application/runtime";
 import type { DiarySnapshot, MealRecord, MealSummary, Nutrients } from "../domain/diary";
 import { parseFoodNumber } from "../domain/foodLibrary";
@@ -15,11 +15,21 @@ const showConfig = ref(false);
 const names = reactive<Record<string, string>>({});
 const newName = ref("");
 const editing = ref<string>();
+const correcting = ref<string>();
+const reason = ref("");
+const audit = ref<string>();
 const amount = ref("");
 const destination = ref("");
 const pendingDelete = ref<string>();
 const busy = ref(false);
 const message = ref("");
+watch(() => props.snapshot.selectedDate, () => {
+  editing.value = undefined;
+  correcting.value = undefined;
+  pendingDelete.value = undefined;
+  audit.value = undefined;
+  message.value = "";
+});
 function nutrients(value: Nutrients) {
   return `碳水 ${value.carbohydrateGrams}g · 蛋白质 ${value.proteinGrams}g · 脂肪 ${value.fatGrams}g · ${value.energyKcal} kcal`;
 }
@@ -59,13 +69,28 @@ async function remove(id: string) {
     return snapshot;
   });
 }
+function beginCorrection(meal: MealRecord) {
+  correcting.value = meal.id;
+  amount.value = String(meal.amount);
+  reason.value = "";
+}
+async function correct(meal: MealRecord) {
+  await run(async () => {
+    const result = await fatLossDiary.correctMeal({ id: meal.id, amount: parseFoodNumber(amount.value, "修正食用量"), reason: reason.value });
+    correcting.value = undefined;
+    message.value = "历史纠错已追加，原始记录保留";
+    return result;
+  });
+}
 </script>
 
 <template>
   <view class="diary">
     <view class="heading"><text class="title">六餐日记</text><button role="button" @click="toggleConfig">{{ showConfig ? '收起餐次设置' : '餐次设置' }}</button></view>
     <text v-if="message" role="status" class="notice">{{ message }}</text>
-    <text v-if="!canEdit" class="meta">当前日期仅供查看；餐食只能在当天录入、编辑和删除。</text>
+    <text v-if="!canEdit" class="meta">餐食只能在当天新增、编辑和删除；结束日期可按规则追加历史纠错。</text>
+    <text class="meta">本地日期锁只增加修改阻力，不具备防篡改安全性。每次操作按设备本地日期判断。</text>
+    <text v-if="snapshot.selectedDate < snapshot.today" class="meta">汇总采用每条来源最新追加的有效修正。纠错与提交前的有效当日总热量比较，绝对变化须超过 10%，正好 10% 拒绝；按已保存的 0.1 kcal 精度比较。零热量日须产生非零热量变化。食用量仍须大于 0。</text>
     <view v-if="showConfig" class="config card">
       <view v-for="group in snapshot.mealGroups" :key="group.id" class="config-row">
         <input v-model="names[group.id]" :aria-label="`${group.name}餐次名称`" maxlength="30" />
@@ -87,6 +112,23 @@ async function remove(id: string) {
         <view v-for="meal in group.meals" :key="meal.id" class="entry">
           <text class="entry-name">{{ meal.foodName }} · {{ meal.amount }}{{ meal.unit === 'g' ? 'g' : '个' }}</text>
           <text class="meta">{{ nutrients(meal.nutrients) }}</text>
+          <text v-if="snapshot.mealCorrections.some((item) => item.sourceMealId === meal.id)" class="meta">有效修正结果 · 已追加 {{ snapshot.mealCorrections.filter((item) => item.sourceMealId === meal.id).length }} 次纠错</text>
+          <button role="button" v-if="snapshot.selectedDate < snapshot.today" :disabled="busy || disabled" @click="beginCorrection(meal)">历史纠错 {{ meal.foodName }}</button>
+          <view v-if="correcting === meal.id" class="editor">
+            <label>修正食用量（{{ meal.unit === 'g' ? 'g' : '个' }}）<input v-model="amount" type="digit" aria-label="历史修正数量" /></label>
+            <text class="meta">按原始记录保存的食材快照换算；不覆盖原始记录。</text>
+            <label>纠错原因 *<input v-model="reason" aria-label="历史纠错原因" placeholder="请说明明显录入错误" /></label>
+            <view class="actions"><button role="button" :disabled="busy || disabled" @click="correct(meal)">追加历史纠错</button><button role="button" @click="correcting = undefined">取消历史纠错</button></view>
+          </view>
+          <button role="button" v-if="snapshot.selectedDate < snapshot.today || snapshot.mealCorrections.some((item) => item.sourceMealId === meal.id)" @click="audit = audit === meal.id ? undefined : meal.id">{{ audit === meal.id ? '收起' : '查看' }}审计轨迹 {{ meal.foodName }}</button>
+          <view v-if="audit === meal.id" class="editor audit">
+            <text class="meta">原始记录 · {{ snapshot.originalMeals.find((item) => item.id === meal.id)?.amount }}{{ meal.unit === 'g' ? 'g' : '个' }} · {{ snapshot.originalMeals.find((item) => item.id === meal.id)?.nutrients.energyKcal }} kcal · 来源 {{ meal.id }}</text>
+            <view v-for="item in snapshot.mealCorrections.filter((entry) => entry.sourceMealId === meal.id)" :key="item.id">
+              <text class="meta">{{ item.createdAt }} · {{ item.previous.amount }} → {{ item.corrected.amount }}{{ meal.unit === 'g' ? 'g' : '个' }} · {{ item.previous.nutrients.energyKcal }} → {{ item.corrected.nutrients.energyKcal }} kcal</text>
+              <text class="meta">当日有效总热量 {{ item.previousDayEnergyKcal }} → {{ item.correctedDayEnergyKcal }} kcal · 原因：{{ item.reason }}</text>
+              <text class="meta">纠错 {{ item.id }} · 关联来源 {{ item.sourceMealId }}{{ item.previousCorrectionId ? ` · 上次纠错 ${item.previousCorrectionId}` : '' }}</text>
+            </view>
+          </view>
           <view v-if="canEdit" class="actions"><button role="button" :disabled="busy || disabled" @click="edit(meal)">编辑餐食 {{ meal.foodName }}</button><button role="button" :disabled="busy || disabled" @click="pendingDelete = meal.id">删除餐食 {{ meal.foodName }}</button></view>
           <view v-if="editing === meal.id && canEdit" class="editor">
             <label>食用量（{{ meal.unit === 'g' ? 'g' : '个' }}）<input v-model="amount" type="digit" aria-label="编辑餐食数量" /></label>

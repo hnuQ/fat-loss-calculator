@@ -100,6 +100,24 @@ export interface MealGroup {
   syncState: "local";
 }
 
+export interface MealCorrection {
+  id: string;
+  ownerId: string;
+  sourceMealId: string;
+  previousCorrectionId?: string;
+  original: MealRecord;
+  previous: MealRecord;
+  corrected: MealRecord;
+  previousDayEnergyKcal: number;
+  correctedDayEnergyKcal: number;
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  deletedAt?: string;
+  syncState: "local";
+}
+
 export interface MealSummary extends MealGroup {
   meals: MealRecord[];
   actual: Nutrients;
@@ -113,6 +131,7 @@ export interface WeightRecord {
 }
 
 export interface DiaryState {
+  mealCorrections?: MealCorrection[];
   mealGroups?: MealGroup[];
   foodLibrary?: FoodLibraryState;
   profile?: HealthProfile;
@@ -134,6 +153,7 @@ export interface DiaryRepository {
 
 export interface Clock {
   today(): string;
+  now?(): string;
 }
 
 export interface WeightTrend {
@@ -156,6 +176,8 @@ export interface PlatformCapabilities {
 }
 
 export interface DiarySnapshot {
+  originalMeals: MealRecord[];
+  mealCorrections: MealCorrection[];
   mealGroups: MealSummary[];
   energyStatus?: "low" | "within" | "high";
   profile?: HealthProfile;
