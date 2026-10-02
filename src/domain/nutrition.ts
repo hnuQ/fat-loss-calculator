@@ -16,6 +16,8 @@ export interface NutritionBaseline {
   energyKcal: number;
 }
 
+export type Macronutrients = Omit<NutritionBaseline, "energyKcal">;
+
 const carbohydrateFactors: Record<Sex, Record<WeeklyExercise, number>> = {
   male: { low: 2.2, medium: 2.5, high: 3, "very-high": 3.5 },
   female: { low: 2, medium: 2.2, high: 2.5, "very-high": 3 },
@@ -40,20 +42,49 @@ const carbohydrateDayFactors: Record<DayType, number> = {
 };
 
 function roundToOneDecimal(value: number): number {
-  return Math.round((value + Number.EPSILON) * 10) / 10;
+  return (
+    Math.round((value + Number.EPSILON * Math.abs(value)) * 10) / 10
+  );
+}
+
+export function calculateEnergyKcal(input: Macronutrients): number {
+  return (
+    Math.round(input.carbohydrateGrams * 4) +
+    Math.round(input.proteinGrams * 4) +
+    Math.round(input.fatGrams * 9)
+  );
 }
 
 export function calculateNutritionBaseline(
   input: NutritionBaselineInput,
 ): NutritionBaseline {
+  if (input.sex !== "male" && input.sex !== "female") {
+    throw new Error("请选择性别");
+  }
   if (!Number.isFinite(input.weightKg) || input.weightKg <= 0) {
-    throw new Error("体重必须是大于 0 的 kg 数值");
+    throw new Error("当前体重必须是大于 0 的 kg 数值");
+  }
+  if (
+    input.weeklyExercise !== "low" &&
+    input.weeklyExercise !== "medium" &&
+    input.weeklyExercise !== "high" &&
+    input.weeklyExercise !== "very-high"
+  ) {
+    throw new Error("请选择每周运动频率");
+  }
+  if (
+    input.dayType !== "training" &&
+    input.dayType !== "cardio" &&
+    input.dayType !== "rest"
+  ) {
+    throw new Error("请选择日型");
   }
 
+  const baseCarbohydrateGrams = roundToOneDecimal(
+    input.weightKg * carbohydrateFactors[input.sex][input.weeklyExercise],
+  );
   const carbohydrateGrams = roundToOneDecimal(
-    input.weightKg *
-      carbohydrateFactors[input.sex][input.weeklyExercise] *
-      carbohydrateDayFactors[input.dayType],
+    baseCarbohydrateGrams * carbohydrateDayFactors[input.dayType],
   );
   const proteinGrams = roundToOneDecimal(
     input.weightKg * proteinFactors[input.weeklyExercise],
@@ -66,9 +97,10 @@ export function calculateNutritionBaseline(
     carbohydrateGrams,
     proteinGrams,
     fatGrams,
-    energyKcal:
-      Math.round(carbohydrateGrams * 4) +
-      Math.round(proteinGrams * 4) +
-      Math.round(fatGrams * 9),
+    energyKcal: calculateEnergyKcal({
+      carbohydrateGrams,
+      proteinGrams,
+      fatGrams,
+    }),
   };
 }

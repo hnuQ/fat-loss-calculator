@@ -13,13 +13,20 @@ import type {
 } from "../domain/diary";
 import { searchBuiltInFoods, builtInFoods } from "../domain/foods";
 import {
+  calculateEnergyKcal,
   calculateNutritionBaseline,
+  type DayType,
   type NutritionBaseline,
   type NutritionBaselineInput,
 } from "../domain/nutrition";
 import { buildWeightTrend } from "../domain/weightTrend";
 
-type EstablishProfileInput = Omit<HealthProfile, "cycleStartDate">;
+type UserTargetInput = Omit<Nutrients, "energyKcal">;
+
+type EstablishProfileInput = Omit<HealthProfile, "cycleStartDate"> & {
+  dayType: DayType;
+  userTarget?: UserTargetInput;
+};
 
 export interface SaveMealInput {
   mealSlot: MealSlot;
@@ -53,7 +60,37 @@ const emptyNutrients = (): Nutrients => ({
 });
 
 function roundToOneDecimal(value: number): number {
-  return Math.round((value + Number.EPSILON) * 10) / 10;
+  return (
+    Math.round((value + Number.EPSILON * Math.abs(value)) * 10) / 10
+  );
+}
+
+function calculateBmi(profile: HealthProfile): number {
+  return roundToOneDecimal(
+    profile.currentWeightKg / (profile.heightCm / 100) ** 2,
+  );
+}
+
+function normalizeUserTarget(input?: UserTargetInput): Nutrients | undefined {
+  if (!input) return undefined;
+
+  const fields: Array<[keyof UserTargetInput, string]> = [
+    ["carbohydrateGrams", "用户目标碳水"],
+    ["proteinGrams", "用户目标蛋白质"],
+    ["fatGrams", "用户目标脂肪"],
+  ];
+  for (const [field, label] of fields) {
+    if (!Number.isFinite(input[field]) || input[field] < 0) {
+      throw new Error(`${label}必须是大于或等于 0 的数值`);
+    }
+  }
+
+  const target = {
+    carbohydrateGrams: roundToOneDecimal(input.carbohydrateGrams),
+    proteinGrams: roundToOneDecimal(input.proteinGrams),
+    fatGrams: roundToOneDecimal(input.fatGrams),
+  };
+  return { ...target, energyKcal: calculateEnergyKcal(target) };
 }
 
 function sumNutrients(items: Nutrients[]): Nutrients {
@@ -86,7 +123,13 @@ function toSnapshot(state: DiaryState, date: string): DiarySnapshot {
       }
     : undefined;
 
-  return { ...state, meals, actual, remaining };
+  return {
+    ...state,
+    meals,
+    bmi: state.profile ? calculateBmi(state.profile) : undefined,
+    actual,
+    remaining,
+  };
 }
 
 function scaleNutrients(food: Food, amount: number): Nutrients {
@@ -109,24 +152,69 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
 
   return {
     async establishProfile(input) {
-      if (!Number.isInteger(input.age) || input.age < 18) {
+      if (!input.nickname.trim()) {
+        throw new Error("请填写昵称");
+      }
+      if (input.sex !== "male" && input.sex !== "female") {
+        throw new Error("请选择性别");
+      }
+      if (!Number.isInteger(input.age)) {
+        throw new Error("年龄必须是整数");
+      }
+      if (input.age < 18) {
         throw new Error("仅支持年满 18 岁的用户");
       }
       if (!Number.isFinite(input.heightCm) || input.heightCm <= 0) {
         throw new Error("身高必须是大于 0 的 cm 数值");
       }
+      if (
+        !Number.isFinite(input.currentWeightKg) ||
+        input.currentWeightKg <= 0
+      ) {
+        throw new Error("当前体重必须是大于 0 的 kg 数值");
+      }
+      if (
+        input.weeklyExercise !== "low" &&
+        input.weeklyExercise !== "medium" &&
+        input.weeklyExercise !== "high" &&
+        input.weeklyExercise !== "very-high"
+      ) {
+        throw new Error("请选择每周运动频率");
+      }
+      if (typeof input.hasFatLossExperience !== "boolean") {
+        throw new Error("请选择是否有减脂基础");
+      }
+      if (
+        input.targetWeightKg !== undefined &&
+        (!Number.isFinite(input.targetWeightKg) || input.targetWeightKg <= 0)
+      ) {
+        throw new Error("目标体重必须是大于 0 的 kg 数值");
+      }
+      if (
+        input.dayType !== "training" &&
+        input.dayType !== "cardio" &&
+        input.dayType !== "rest"
+      ) {
+        throw new Error("请选择日型");
+      }
+
+      const { dayType, userTarget, ...profile } = input;
+      const normalizedUserTarget = normalizeUserTarget(userTarget);
 
       const state = await readState(dependencies.repository);
       state.profile = {
-        ...input,
+        ...profile,
+        nickname: profile.nickname.trim(),
         cycleStartDate:
           state.profile?.cycleStartDate ?? dependencies.clock.today(),
       };
+      state.dayType = dayType;
+      state.userTarget = normalizedUserTarget;
       state.baseline = calculateBaseline({
-        sex: input.sex,
-        weightKg: input.currentWeightKg,
-        weeklyExercise: input.weeklyExercise,
-        dayType: input.dayType,
+        sex: profile.sex,
+        weightKg: profile.currentWeightKg,
+        weeklyExercise: profile.weeklyExercise,
+        dayType,
       });
       await dependencies.repository.write(state);
       return toSnapshot(state, dependencies.clock.today());

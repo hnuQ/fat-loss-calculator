@@ -22,7 +22,6 @@ export interface HealthProfile {
   weeklyExercise: WeeklyExercise;
   hasFatLossExperience: boolean;
   targetWeightKg?: number;
-  dayType: DayType;
   cycleStartDate: string;
 }
 
@@ -60,7 +59,9 @@ export interface WeightRecord {
 
 export interface DiaryState {
   profile?: HealthProfile;
+  dayType?: DayType;
   baseline?: NutritionBaseline;
+  userTarget?: Nutrients;
   meals: MealRecord[];
   weights: WeightRecord[];
 }
@@ -95,9 +96,12 @@ export interface PlatformCapabilities {
 
 export interface DiarySnapshot {
   profile?: HealthProfile;
+  dayType?: DayType;
   baseline?: NutritionBaseline;
+  userTarget?: Nutrients;
   meals: MealRecord[];
   weights: WeightRecord[];
+  bmi?: number;
   actual: Nutrients;
   remaining?: Nutrients;
 }
