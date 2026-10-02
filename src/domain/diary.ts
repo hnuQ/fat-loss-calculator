@@ -59,6 +59,21 @@ export interface Food {
   nutrients: Nutrients;
 }
 
+export interface CustomFood extends Food {
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  deletedAt?: string;
+  syncState: "local";
+}
+
+export interface FoodLibraryState {
+  customFoods: CustomFood[];
+  favoriteIds: string[];
+  recentIds: string[];
+}
+
 export interface MealRecord {
   id: string;
   cycleId?: string;
@@ -79,6 +94,7 @@ export interface WeightRecord {
 }
 
 export interface DiaryState {
+  foodLibrary?: FoodLibraryState;
   profile?: HealthProfile;
   cycles?: FatLossCycle[];
   dayTypeRecords?: DayTypeRecord[];

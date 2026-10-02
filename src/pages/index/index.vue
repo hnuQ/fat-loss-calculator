@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 
 import { fatLossDiary } from "../../application/runtime";
 import WeightTrendCanvas from "../../components/WeightTrendCanvas.vue";
+import FoodLibrary from "../../components/FoodLibrary.vue";
 import type {
   DiarySnapshot,
   FatLossCycle,
@@ -44,10 +45,7 @@ const snapshot = ref<DiarySnapshot>();
 const trend = ref<WeightTrend>();
 const busy = ref(false);
 const message = ref("");
-const searchQuery = ref("");
-const searchResults = ref<Food[]>([]);
 const selectedMealIndex = ref(0);
-const foodAmount = ref(50);
 const weightKg = ref("");
 const platform = fatLossDiary.getPlatformCapabilities();
 
@@ -256,19 +254,14 @@ async function viewCycle(cycle: FatLossCycle): Promise<void> {
   await openDate(date, cycle.id);
 }
 
-function searchFoods(): void {
-  searchResults.value = fatLossDiary.searchFoods(searchQuery.value);
-  message.value = searchResults.value.length ? "" : "没有找到匹配食材";
-}
-
-async function addFood(food: Food): Promise<void> {
+async function addFood(food: Food, amount: number): Promise<void> {
   busy.value = true;
   message.value = "";
   try {
     snapshot.value = await fatLossDiary.saveMeal({
       mealSlot: mealOptions[selectedMealIndex.value].value,
       foodId: food.id,
-      amount: Number(foodAmount.value),
+      amount,
     });
     message.value = `${food.name} 已保存到${mealOptions[selectedMealIndex.value].label}`;
   } catch (error) {
@@ -546,31 +539,13 @@ onMounted(async () => {
       </view>
 
       <view v-if="canRecordToday && snapshot.baseline" class="card">
-        <text class="card-title">记录餐食</text>
-        <view class="search-row">
-          <input v-model="searchQuery" class="search-input" placeholder="搜索燕麦、米饭、鸡蛋…" />
-          <button class="secondary-button" @click="searchFoods">搜索</button>
-        </view>
-        <view class="field-row">
-          <label class="field compact">
-            <text>餐次</text>
-            <picker :range="mealOptions" range-key="label" @change="setMeal">
-              <view class="picker-value">{{ mealOptions[selectedMealIndex].label }}</view>
-            </picker>
-          </label>
-          <label class="field compact">
-            <text>食用量</text>
-            <input v-model.number="foodAmount" type="digit" />
-          </label>
-        </view>
-        <view v-for="food in searchResults" :key="food.id" class="food-result">
-          <view>
-            <text class="food-name">{{ food.name }}</text>
-            <text class="food-meta">每 {{ food.baseAmount }}{{ food.unit === 'g' ? 'g' : '个' }} · {{ food.nutrients.energyKcal }} kcal</text>
-            <text class="food-meta">本次添加 {{ foodAmount }}{{ food.unit === 'g' ? 'g' : '个' }}</text>
-          </view>
-          <button class="add-button" :disabled="busy" @click="addFood(food)">添加</button>
-        </view>
+        <text class="card-title">所选餐次</text>
+        <label class="field compact">
+          <text>餐次</text>
+          <picker :range="mealOptions" range-key="label" @change="setMeal">
+            <view class="picker-value">{{ mealOptions[selectedMealIndex].label }}</view>
+          </picker>
+        </label>
         <view v-if="snapshot.meals.length" class="meal-list">
           <view v-for="meal in snapshot.meals" :key="meal.id" class="meal-row">
             <text>{{ mealOptions.find((item) => item.value === meal.mealSlot)?.label }} · {{ meal.foodName }}</text>
@@ -578,6 +553,8 @@ onMounted(async () => {
           </view>
         </view>
       </view>
+
+      <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline)" :disabled="busy" @add="addFood" />
 
       <view v-if="snapshot.selectedCycle" class="card">
         <text class="card-title">90 天体重趋势</text>

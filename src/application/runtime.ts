@@ -2,9 +2,13 @@ import { createUniStorageDiaryRepository } from "../infrastructure/uniStorageDia
 import { systemClock } from "../infrastructure/systemClock";
 import { uniPlatformCapabilities } from "../infrastructure/uniPlatformCapabilities";
 import { createFatLossDiary } from "./fatLossDiary";
+import { createFoodLibrary } from "./foodLibrary";
+
+const repository = createUniStorageDiaryRepository();
+export const foodLibrary = createFoodLibrary({ repository });
 
 export const fatLossDiary = createFatLossDiary({
-  repository: createUniStorageDiaryRepository(),
+  repository,
   clock: systemClock,
   platform: uniPlatformCapabilities,
 });

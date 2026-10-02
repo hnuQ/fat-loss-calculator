@@ -19,7 +19,9 @@ import {
   isDateWithin,
   listCalendarDates,
 } from "../domain/cycle";
-import { builtInFoods, searchBuiltInFoods } from "../domain/foods";
+import { searchBuiltInFoods } from "../domain/foods";
+import { libraryState, recordFoodUse, scaleFoodNutrients } from "../domain/foodLibrary";
+import { availableFoods } from "./foodLibrary";
 import {
   calculateEnergyKcal,
   calculateNutritionBaseline,
@@ -130,18 +132,6 @@ function sumNutrients(items: Nutrients[]): Nutrients {
     }),
     emptyNutrients(),
   );
-}
-
-function scaleNutrients(food: Food, amount: number): Nutrients {
-  const factor = amount / food.baseAmount;
-  return {
-    carbohydrateGrams: roundToOneDecimal(
-      food.nutrients.carbohydrateGrams * factor,
-    ),
-    proteinGrams: roundToOneDecimal(food.nutrients.proteinGrams * factor),
-    fatGrams: roundToOneDecimal(food.nutrients.fatGrams * factor),
-    energyKcal: roundToOneDecimal(food.nutrients.energyKcal * factor),
-  };
 }
 
 function cycleContains(cycle: FatLossCycle, date: string): boolean {
@@ -593,14 +583,12 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
     },
 
     async saveMeal(input) {
-      if (!Number.isFinite(input.amount) || input.amount <= 0) {
-        throw new Error("食用量必须大于 0");
-      }
-      const food = builtInFoods.find((candidate) => candidate.id === input.foodId);
-      if (!food) throw new Error(`未找到食材：${input.foodId}`);
-
       const today = dependencies.clock.today();
       const state = await readState(dependencies.repository, today);
+      const library = libraryState(state.foodLibrary);
+      const food = availableFoods(library).find((candidate) => candidate.id === input.foodId);
+      if (!food) throw new Error(`未找到食材：${input.foodId}`);
+      const nutrients = scaleFoodNutrients(food, input.amount);
       if (!state.profile) throw new Error("请先建立健康档案");
       const cycle = activeCycleOf(state);
       if (!cycle || !cycleContains(cycle, today)) {
@@ -623,8 +611,10 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         foodName: food.name,
         amount: input.amount,
         unit: food.unit,
-        nutrients: scaleNutrients(food, input.amount),
+        nutrients,
       });
+      recordFoodUse(library, food.id);
+      state.foodLibrary = library;
       await dependencies.repository.write(state);
       return toSnapshot(state, today, { cycleId: cycle.id, date: today });
     },
