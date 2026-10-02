@@ -1,5 +1,8 @@
 import type {
   Clock,
+  BodyMeasurements,
+  BodyRecord,
+  BodyCorrection,
   DayTypeRecord,
   DiaryRepository,
   DiarySnapshot,
@@ -32,6 +35,7 @@ import {
   type NutritionBaselineInput,
 } from "../domain/nutrition";
 import { buildWeightTrend } from "../domain/weightTrend";
+import { bodyFields, validateBodyMeasurements } from "../domain/body";
 import { calorieStatus, defaultMealGroups, mealGroupName, sumNutrients } from "../domain/meals";
 
 type UserTargetInput = Omit<Nutrients, "energyKcal">;
@@ -71,6 +75,9 @@ export interface FatLossDiary {
   addMealGroup(name: string, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   configureMealGroup(input: { id: string; name: string; hidden: boolean }, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
   recordWeight(input: { weightKg: number }): Promise<DiarySnapshot>;
+  saveBodyRecord(input: { measurements: BodyMeasurements; id?: string; date?: string }): Promise<DiarySnapshot>;
+  deleteBodyRecord(id: string): Promise<DiarySnapshot>;
+  correctBodyRecord(input: { id: string; measurements: BodyMeasurements; reason: string }): Promise<DiarySnapshot>;
   readWeightTrend(cycleId?: string): Promise<WeightTrend>;
   getPlatformCapabilities(): PlatformCapabilities;
 }
@@ -84,6 +91,8 @@ interface Dependencies {
 }
 
 type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords" | "mealGroups" | "mealCorrections"> & {
+  bodyRecords: BodyRecord[];
+  bodyCorrections: BodyCorrection[];
   mealCorrections: MealCorrection[];
   mealGroups: MealGroup[];
   cycles: FatLossCycle[];
@@ -223,6 +232,18 @@ function normalizeState(
     }
   }
 
+  if (!Array.isArray(state.bodyRecords)) {
+    state.bodyRecords = state.weights.map((record) => ({
+      ...record, ownerId: "local-user", createdAt: `${record.date}T00:00:00`,
+      updatedAt: `${record.date}T00:00:00`, revision: 1, syncState: "local",
+    }));
+    changed = true;
+  }
+  if (!Array.isArray(state.bodyCorrections)) {
+    state.bodyCorrections = [];
+    changed = true;
+  }
+
   return { state, changed };
 }
 
@@ -258,6 +279,25 @@ function editableMeal(state: NormalizedDiaryState, id: string, today: string): M
 
 function effectiveMeal(state: NormalizedDiaryState, source: MealRecord): MealRecord {
   return [...state.mealCorrections].reverse().find((correction) => correction.sourceMealId === source.id)?.corrected ?? source;
+}
+
+function effectiveBody(state: NormalizedDiaryState, source: BodyRecord): BodyRecord {
+  return [...state.bodyCorrections].reverse().find((correction) => correction.sourceBodyId === source.id)?.corrected ?? source;
+}
+
+function editableBody(state: NormalizedDiaryState, id: string, today: string): BodyRecord {
+  const source = state.bodyRecords.find((record) => record.id === id);
+  if (!source) throw new Error("未找到身体记录");
+  if (source.date !== today || source.cycleId !== activeCycleOf(state)?.id || state.bodyCorrections.some((correction) => correction.sourceBodyId === id)) {
+    throw new Error("历史身体记录和已归档周期不能覆盖或删除，请追加历史纠错");
+  }
+  return source;
+}
+
+function bodyWeights(records: BodyRecord[]) {
+  return records.filter((record) => record.weightKg !== undefined).map((record) => ({
+    id: record.id, cycleId: record.cycleId, date: record.date, weightKg: record.weightKg!,
+  }));
 }
 
 function savedFood(meal: MealRecord): Food {
@@ -353,9 +393,9 @@ function toSnapshot(
     : [];
   const originalMeals = cycleMeals.filter((meal) => meal.date === selectedDate);
   const meals = originalMeals.map((meal) => effectiveMeal(state, meal));
-  const cycleWeights = selectedCycle
-    ? recordsForCycle(state.weights, selectedCycle)
-    : [];
+  const originalBodyRecords = selectedCycle ? recordsForCycle(state.bodyRecords, selectedCycle) : [];
+  const bodyRecords = originalBodyRecords.map((record) => effectiveBody(state, record));
+  const cycleWeights = bodyWeights(bodyRecords);
   const selectedDateWeights = cycleWeights.filter(
     (record) => record.date === selectedDate,
   );
@@ -378,6 +418,9 @@ function toSnapshot(
     : undefined;
 
   return {
+    bodyRecords,
+    originalBodyRecords,
+    bodyCorrections: state.bodyCorrections.filter((correction) => originalBodyRecords.some((record) => record.id === correction.sourceBodyId)),
     originalMeals,
     mealCorrections: state.mealCorrections.filter((correction) => originalMeals.some((meal) => meal.id === correction.sourceMealId)),
     mealGroups: state.mealGroups.map((group) => {
@@ -394,7 +437,7 @@ function toSnapshot(
     dateStrip: buildDateStrip(cycleDates, selectedDate),
     cycleDates,
     isBlankDate:
-      !dayTypeRecord && meals.length === 0 && selectedDateWeights.length === 0,
+      !dayTypeRecord && meals.length === 0 && !bodyRecords.some((record) => record.date === selectedDate),
     dayType: dayTypeRecord?.dayType,
     baseline: dayTypeRecord?.baseline,
     userTarget: state.userTarget,
@@ -751,10 +794,12 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
     },
 
     async recordWeight(input) {
-      if (!Number.isFinite(input.weightKg) || input.weightKg <= 0) {
-        throw new Error("体重必须是大于 0 的 kg 数值");
-      }
+      return this.saveBodyRecord({ measurements: { weightKg: input.weightKg } });
+    },
+
+    async saveBodyRecord(input) {
       const today = dependencies.clock.today();
+      if (input.date && input.date !== today) throw new Error("只能新增或编辑今天的身体记录");
       const state = await readState(dependencies.repository, today);
       if (!state.profile) throw new Error("请先建立健康档案");
       const cycle = activeCycleOf(state);
@@ -762,14 +807,55 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         throw new Error("今天不在进行中的减脂周期内");
       }
 
-      state.weights.push({
-        id: `${cycle.id}-${today}-weight-${state.weights.length + 1}`,
-        cycleId: cycle.id,
-        date: today,
-        weightKg: roundToOneDecimal(input.weightKg),
-      });
+      const source = input.id ? editableBody(state, input.id, today) : undefined;
+      const measurements = validateBodyMeasurements(input.measurements);
+      const timestamp = dependencies.clock.now?.() ?? new Date().toISOString();
+      if (source) {
+        for (const field of bodyFields) delete source[field.key];
+        Object.assign(source, measurements, { updatedAt: timestamp, revision: source.revision + 1 });
+      } else {
+        state.bodyRecords.push({
+          id: `body-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          cycleId: cycle.id, date: today, ...measurements, ownerId: "local-user",
+          createdAt: timestamp, updatedAt: timestamp, revision: 1, syncState: "local",
+        });
+      }
       await dependencies.repository.write(state);
       return toSnapshot(state, today, { cycleId: cycle.id, date: today });
+    },
+
+    async deleteBodyRecord(id) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const source = editableBody(state, id, today);
+      state.bodyRecords = state.bodyRecords.filter((record) => record.id !== id);
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: source.cycleId, date: today });
+    },
+
+    async correctBodyRecord(input) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const source = state.bodyRecords.find((record) => record.id === input.id);
+      if (!source) throw new Error("未找到身体记录");
+      if (source.date >= today) throw new Error("只能追加已经结束日期的身体纠错");
+      if (typeof input.reason !== "string" || !input.reason.trim()) throw new Error("请填写明显录入错误的纠错原因");
+      const measurements = validateBodyMeasurements(input.measurements);
+      const previous = effectiveBody(state, source);
+      if (bodyFields.every((field) => previous[field.key] === measurements[field.key])) throw new Error("修正值与当前有效值相同");
+      const timestamp = dependencies.clock.now?.() ?? new Date().toISOString();
+      const { weightKg, bodyFatPercent, waistCm, chestCm, hipCm, thighCm, ...metadata } = previous;
+      const corrected: BodyRecord = { ...metadata, ...measurements, updatedAt: timestamp, revision: previous.revision + 1 };
+      const prior = [...state.bodyCorrections].reverse().find((correction) => correction.sourceBodyId === source.id);
+      const copy = (record: BodyRecord): BodyRecord => JSON.parse(JSON.stringify(record));
+      state.bodyCorrections.push({
+        id: `body-correction-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        ownerId: "local-user", sourceBodyId: source.id, previousCorrectionId: prior?.id,
+        original: copy(source), previous: copy(previous), corrected: copy(corrected),
+        reason: input.reason.trim(), createdAt: timestamp, updatedAt: timestamp, revision: 1, syncState: "local",
+      });
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: source.cycleId, date: source.date });
     },
 
     async readWeightTrend(cycleId) {
@@ -781,7 +867,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         : activeCycleOf(state) ?? state.cycles[state.cycles.length - 1];
       if (!cycle) throw new Error("请先创建减脂周期");
       return buildTrend(
-        recordsForCycle(state.weights, cycle),
+        bodyWeights(recordsForCycle(state.bodyRecords, cycle).map((record) => effectiveBody(state, record))),
         cycle.startDate,
         state.profile.targetWeightKg,
       );

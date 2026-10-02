@@ -2,14 +2,13 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import { fatLossDiary } from "../../application/runtime";
-import WeightTrendCanvas from "../../components/WeightTrendCanvas.vue";
+import BodyProgress from "../../components/BodyProgress.vue";
 import FoodLibrary from "../../components/FoodLibrary.vue";
 import MealDiary from "../../components/MealDiary.vue";
 import type {
   DiarySnapshot,
   FatLossCycle,
   Food,
-  WeightTrend,
 } from "../../domain/diary";
 import type { DayType, Sex, WeeklyExercise } from "../../domain/nutrition";
 
@@ -33,7 +32,7 @@ const experienceOptions: Array<{ label: string; value: boolean }> = [
   { label: "无减脂基础", value: false },
 ];
 const snapshot = ref<DiarySnapshot>();
-const trend = ref<WeightTrend>();
+const page = ref<"today" | "progress">("today");
 const busy = ref(false);
 const message = ref("");
 const selectedGroup = ref("breakfast");
@@ -41,7 +40,6 @@ const visibleGroups = computed(() => snapshot.value?.mealGroups.filter((group) =
 watch(visibleGroups, (groups) => {
   if (!groups.some((group) => group.id === selectedGroup.value)) selectedGroup.value = groups[0]?.id ?? "";
 });
-const weightKg = ref("");
 const platform = fatLossDiary.getPlatformCapabilities();
 
 const form = reactive({
@@ -119,11 +117,6 @@ function buildUserTarget() {
 async function refresh(): Promise<void> {
   snapshot.value = await fatLossDiary.openDiary();
   cycleForm.startDate ||= snapshot.value.today;
-  if (snapshot.value.selectedCycle) {
-    trend.value = await fatLossDiary.readWeightTrend(
-      snapshot.value.selectedCycle.id,
-    );
-  }
 }
 
 async function establishProfile(): Promise<void> {
@@ -167,9 +160,6 @@ async function startCycle(): Promise<void> {
       startDate: cycleForm.startDate,
       dayType: cycleForm.dayType as DayType,
     });
-    trend.value = await fatLossDiary.readWeightTrend(
-      snapshot.value.selectedCycle?.id,
-    );
     message.value = "90 日减脂周期已创建";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "创建周期失败";
@@ -181,11 +171,6 @@ async function startCycle(): Promise<void> {
 async function openDate(date: string, cycleId?: string): Promise<void> {
   try {
     snapshot.value = await fatLossDiary.openDiary({ date, cycleId });
-    if (snapshot.value.selectedCycle) {
-      trend.value = await fatLossDiary.readWeightTrend(
-        snapshot.value.selectedCycle.id,
-      );
-    }
   } catch (error) {
     message.value = error instanceof Error ? error.message : "切换日期失败";
   }
@@ -258,23 +243,6 @@ async function addFood(food: Food, amount: number): Promise<void> {
   }
 }
 
-async function recordWeight(): Promise<void> {
-  busy.value = true;
-  message.value = "";
-  try {
-    snapshot.value = await fatLossDiary.recordWeight({
-      weightKg: Number(weightKg.value),
-    });
-    trend.value = await fatLossDiary.readWeightTrend();
-    weightKg.value = "";
-    message.value = "体重已追加记录";
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : "记录体重失败";
-  } finally {
-    busy.value = false;
-  }
-}
-
 onMounted(async () => {
   try {
     await refresh();
@@ -288,7 +256,7 @@ onMounted(async () => {
   <view class="page-shell">
     <view class="hero">
       <text class="eyebrow">90 天减脂记录</text>
-      <text class="title">{{ heroTitle }}</text>
+      <text class="title">{{ page === 'progress' ? '进度' : heroTitle }}</text>
       <text class="subtitle">只记录计算结果、实际摄入和真实体重</text>
     </view>
 
@@ -375,6 +343,10 @@ onMounted(async () => {
     </view>
 
     <template v-else>
+      <view class="page-tabs">
+        <button role="button" :class="{ selected: page === 'today' }" @click="page = 'today'">今天</button>
+        <button role="button" :class="{ selected: page === 'progress' }" @click="page = 'progress'">进度</button>
+      </view>
       <view class="card profile-card">
         <view>
           <text class="card-title">{{ snapshot.profile.nickname }}的健康档案</text>
@@ -491,6 +463,7 @@ onMounted(async () => {
         <text class="empty-copy">没有日型、营养、餐食或身体记录，保持空白。</text>
       </view>
 
+      <template v-if="page === 'today'">
       <view v-if="snapshot.baseline" class="card energy-card" :class="`status-${energyStatus}`">
         <view class="energy-ring" :style="{ '--progress': `${actualPercentage * 3.6}deg` }">
           <view class="energy-ring-inner">
@@ -532,16 +505,8 @@ onMounted(async () => {
       <text v-if="canRecordToday && snapshot.baseline" class="section-title">录入餐次：{{ visibleGroups.find((group) => group.id === selectedGroup)?.name ?? '请先显示或新增餐次' }}</text>
 
       <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" @add="addFood" />
-
-      <view v-if="snapshot.selectedCycle" class="card">
-        <text class="card-title">90 天体重趋势</text>
-        <view v-if="canRecordToday" class="search-row">
-          <input v-model="weightKg" class="search-input" type="digit" placeholder="今天的体重（kg）" />
-          <button class="secondary-button" :disabled="busy" @click="recordWeight">记录</button>
-        </view>
-        <WeightTrendCanvas v-if="trend?.points.length" :trend="trend" />
-        <text v-else class="empty-copy">记录体重后显示真实称重点，不补齐空白日期。</text>
-      </view>
+      </template>
+      <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
       <view class="platform-note">
         <text>运行平台：{{ platform.kind }}</text>
@@ -569,6 +534,9 @@ page {
   flex-direction: column;
   margin-bottom: 28rpx;
 }
+.page-tabs { display: flex; gap: 16rpx; margin-bottom: 24rpx; }
+.page-tabs button { flex: 1; margin: 0; color: #315e47; background: white; }
+.page-tabs .selected { color: white; background: #1f7a4c; }
 
 .eyebrow {
   color: #4b7860;

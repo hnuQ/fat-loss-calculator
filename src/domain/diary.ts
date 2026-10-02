@@ -130,7 +130,44 @@ export interface WeightRecord {
   weightKg: number;
 }
 
+export interface BodyMeasurements {
+  weightKg?: number;
+  bodyFatPercent?: number;
+  waistCm?: number;
+  chestCm?: number;
+  hipCm?: number;
+  thighCm?: number;
+}
+
+export interface BodyRecord extends BodyMeasurements {
+  id: string;
+  cycleId?: string;
+  date: string;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  syncState: "local";
+}
+
+export interface BodyCorrection {
+  id: string;
+  ownerId: string;
+  sourceBodyId: string;
+  previousCorrectionId?: string;
+  original: BodyRecord;
+  previous: BodyRecord;
+  corrected: BodyRecord;
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  syncState: "local";
+}
+
 export interface DiaryState {
+  bodyRecords?: BodyRecord[];
+  bodyCorrections?: BodyCorrection[];
   mealCorrections?: MealCorrection[];
   mealGroups?: MealGroup[];
   foodLibrary?: FoodLibraryState;
@@ -176,6 +213,9 @@ export interface PlatformCapabilities {
 }
 
 export interface DiarySnapshot {
+  bodyRecords: BodyRecord[];
+  originalBodyRecords: BodyRecord[];
+  bodyCorrections: BodyCorrection[];
   originalMeals: MealRecord[];
   mealCorrections: MealCorrection[];
   mealGroups: MealSummary[];
