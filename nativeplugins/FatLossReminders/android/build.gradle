@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.library' version '8.7.3'
+}
+
+android {
+    namespace 'org.fatloss.reminders'
+    compileSdk 35
+    defaultConfig {
+        minSdk 23
+        consumerProguardFiles 'consumer-rules.pro'
+        testInstrumentationRunner 'org.fatloss.reminders.TrainingReminderInstrumentation'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+// Pass -PdcloudSdkLibs=<directory of the matching official DCloud Android SDK jars/aars>.
+// These runtime libraries are provided by the host; never bundle another copy.
+def sdkLibs = providers.gradleProperty('dcloudSdkLibs')
+if (!sdkLibs.isPresent()) throw new GradleException('Supply -PdcloudSdkLibs with the official DCloud Android SDK library directory')
+dependencies {
+    compileOnly fileTree(dir: sdkLibs.get(), include: ['uniapp-v8-release.aar', 'DCUniMPSDK-V2-release.aar'])
+    compileOnly 'com.alibaba:fastjson:1.2.83'
+}
+
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+tasks.register('packagePlugin') {
+    dependsOn 'assembleRelease'
+    inputs.file layout.buildDirectory.file('outputs/aar/android-release.aar')
+    outputs.file layout.projectDirectory.file('fat-loss-reminders.aar')
+    doLast {
+        java.nio.file.Files.copy(layout.buildDirectory.file('outputs/aar/android-release.aar').get().asFile.toPath(),
+            layout.projectDirectory.file('fat-loss-reminders.aar').asFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+}

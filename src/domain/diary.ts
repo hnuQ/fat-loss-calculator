@@ -4,6 +4,7 @@ import type {
   Sex,
   WeeklyExercise,
 } from "./nutrition";
+import type { TrainingState, TrainingRecord } from "./training";
 
 export type MealSlot =
   | "breakfast"
@@ -166,6 +167,7 @@ export interface BodyCorrection {
 }
 
 export interface DiaryState {
+  training?: TrainingState;
   bodyRecords?: BodyRecord[];
   bodyCorrections?: BodyCorrection[];
   mealCorrections?: MealCorrection[];
@@ -213,6 +215,7 @@ export interface PlatformCapabilities {
 }
 
 export interface DiarySnapshot {
+  trainingRecords: TrainingRecord[];
   bodyRecords: BodyRecord[];
   originalBodyRecords: BodyRecord[];
   bodyCorrections: BodyCorrection[];

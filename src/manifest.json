@@ -1,33 +1,48 @@
 {
-  "name": "减脂记录",
-  "appid": "__UNI__FATLOSS",
-  "description": "跨 Android 与微信小程序的减脂记录技术纵向样片",
-  "versionName": "0.1.0",
-  "versionCode": "100",
-  "vueVersion": "3",
-  "transformPx": false,
-  "uniStatistics": {
-    "enable": false
-  },
-  "app-plus": {
-    "usingComponents": true,
-    "nvueStyleCompiler": "uni-app",
-    "compilerVersion": 3,
-    "splashscreen": {
-      "alwaysShowBeforeRender": true,
-      "waiting": true,
-      "autoclose": true,
-      "delay": 0
-    }
-  },
-  "mp-weixin": {
-    "appid": "wx59a6c7dfad7e7e51",
-    "setting": {
-      "urlCheck": false
+    "name" : "减脂记录",
+    "appid" : "__UNI__382F0BE",
+    "description" : "跨 Android 与微信小程序的减脂记录技术纵向样片",
+    "versionName" : "0.1.0",
+    "versionCode" : "100",
+    "vueVersion" : "3",
+    "transformPx" : false,
+    "uniStatistics" : {
+        "enable" : false
     },
-    "usingComponents": true
-  },
-  "h5": {
-    "title": "减脂记录"
-  }
+    "app-plus" : {
+        "nativePlugins" : {
+            "FatLossReminders" : {
+                "__plugin_info__" : {
+                    "name" : "离线训练提醒",
+                    "description" : "用户主动启用的每周 Android 本地训练通知",
+                    "platforms" : "Android",
+                    "isCloud" : false
+                }
+            }
+        },
+        "usingComponents" : true,
+        "nvueStyleCompiler" : "uni-app",
+        "compilerVersion" : 3,
+        "splashscreen" : {
+            "alwaysShowBeforeRender" : true,
+            "waiting" : true,
+            "autoclose" : true,
+            "delay" : 0
+        },
+        "distribute" : {
+            "ios" : {
+                "dSYMs" : false
+            }
+        }
+    },
+    "mp-weixin" : {
+        "appid" : "wx59a6c7dfad7e7e51",
+        "setting" : {
+            "urlCheck" : false
+        },
+        "usingComponents" : true
+    },
+    "h5" : {
+        "title" : "减脂记录"
+    }
 }

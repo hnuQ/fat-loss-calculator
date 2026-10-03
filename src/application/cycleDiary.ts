@@ -36,6 +36,7 @@ import {
 } from "../domain/nutrition";
 import { buildWeightTrend } from "../domain/weightTrend";
 import { bodyFields, validateBodyMeasurements } from "../domain/body";
+import { trainingState } from "../domain/training";
 import { calorieStatus, defaultMealGroups, mealGroupName, sumNutrients } from "../domain/meals";
 
 type UserTargetInput = Omit<Nutrients, "energyKcal">;
@@ -418,6 +419,7 @@ function toSnapshot(
     : undefined;
 
   return {
+    trainingRecords: selectedCycle ? trainingState(state.training).records.filter((record) => record.cycleId === selectedCycle.id && record.date === selectedDate) : [],
     bodyRecords,
     originalBodyRecords,
     bodyCorrections: state.bodyCorrections.filter((correction) => originalBodyRecords.some((record) => record.id === correction.sourceBodyId)),
@@ -437,7 +439,7 @@ function toSnapshot(
     dateStrip: buildDateStrip(cycleDates, selectedDate),
     cycleDates,
     isBlankDate:
-      !dayTypeRecord && meals.length === 0 && !bodyRecords.some((record) => record.date === selectedDate),
+      !dayTypeRecord && meals.length === 0 && !bodyRecords.some((record) => record.date === selectedDate) && !trainingState(state.training).records.some((record) => record.cycleId === selectedCycle?.id && record.date === selectedDate),
     dayType: dayTypeRecord?.dayType,
     baseline: dayTypeRecord?.baseline,
     userTarget: state.userTarget,

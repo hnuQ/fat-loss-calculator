@@ -5,6 +5,7 @@ import { fatLossDiary } from "../../application/runtime";
 import BodyProgress from "../../components/BodyProgress.vue";
 import FoodLibrary from "../../components/FoodLibrary.vue";
 import MealDiary from "../../components/MealDiary.vue";
+import TrainingDiary from "../../components/TrainingDiary.vue";
 import type {
   DiarySnapshot,
   FatLossCycle,
@@ -32,7 +33,7 @@ const experienceOptions: Array<{ label: string; value: boolean }> = [
   { label: "无减脂基础", value: false },
 ];
 const snapshot = ref<DiarySnapshot>();
-const page = ref<"today" | "progress">("today");
+const page = ref<"today" | "training" | "progress">("today");
 const busy = ref(false);
 const message = ref("");
 const selectedGroup = ref("breakfast");
@@ -256,7 +257,7 @@ onMounted(async () => {
   <view class="page-shell">
     <view class="hero">
       <text class="eyebrow">90 天减脂记录</text>
-      <text class="title">{{ page === 'progress' ? '进度' : heroTitle }}</text>
+      <text class="title">{{ page === 'progress' ? '进度' : page === 'training' ? '训练' : heroTitle }}</text>
       <text class="subtitle">只记录计算结果、实际摄入和真实体重</text>
     </view>
 
@@ -345,6 +346,7 @@ onMounted(async () => {
     <template v-else>
       <view class="page-tabs">
         <button role="button" :class="{ selected: page === 'today' }" @click="page = 'today'">今天</button>
+        <button role="button" :class="{ selected: page === 'training' }" @click="page = 'training'">训练</button>
         <button role="button" :class="{ selected: page === 'progress' }" @click="page = 'progress'">进度</button>
       </view>
       <view class="card profile-card">
@@ -460,7 +462,7 @@ onMounted(async () => {
 
       <view v-if="snapshot.selectedCycle && snapshot.isBlankDate" class="card blank-card">
         <text class="card-title">本日暂无记录</text>
-        <text class="empty-copy">没有日型、营养、餐食或身体记录，保持空白。</text>
+        <text class="empty-copy">没有日型、营养、餐食、训练或身体记录，保持空白。</text>
       </view>
 
       <template v-if="page === 'today'">
@@ -507,6 +509,7 @@ onMounted(async () => {
       <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" @add="addFood" />
       </template>
       <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
+      <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
       <view class="platform-note">
         <text>运行平台：{{ platform.kind }}</text>
