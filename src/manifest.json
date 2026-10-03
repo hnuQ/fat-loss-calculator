@@ -1,7 +1,7 @@
 {
     "name" : "减脂记录",
     "appid" : "__UNI__382F0BE",
-    "description" : "跨 Android 与微信小程序的减脂记录技术纵向样片",
+    "description" : "离线记录饮食、训练和身体数据，支持完整备份恢复",
     "versionName" : "0.1.0",
     "versionCode" : "100",
     "vueVersion" : "3",
@@ -30,6 +30,12 @@
             "delay" : 0
         },
         "distribute" : {
+            "android" : {
+                "packagename" : "org.fatloss.diary",
+                "abiFilters" : [ "armeabi-v7a", "arm64-v8a", "x86" ],
+                "minSdkVersion" : 23,
+                "targetSdkVersion" : 35
+            },
             "ios" : {
                 "dSYMs" : false
             }
