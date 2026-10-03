@@ -259,6 +259,11 @@ async function readState(
   return normalized.state;
 }
 
+/** Used by backup import to finish legacy migration before replacing live storage. */
+export function migrateLegacyDiaryState(state: DiaryState, today: string): DiaryState {
+  return normalizeState(state, today).state;
+}
+
 function activeCycleOf(state: NormalizedDiaryState): FatLossCycle | undefined {
   return state.cycles.find((cycle) => cycle.status === "active");
 }

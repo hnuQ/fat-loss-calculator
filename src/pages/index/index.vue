@@ -6,6 +6,7 @@ import BodyProgress from "../../components/BodyProgress.vue";
 import FoodLibrary from "../../components/FoodLibrary.vue";
 import MealDiary from "../../components/MealDiary.vue";
 import TrainingDiary from "../../components/TrainingDiary.vue";
+import BackupManager from "../../components/BackupManager.vue";
 import type {
   DiarySnapshot,
   FatLossCycle,
@@ -33,7 +34,7 @@ const experienceOptions: Array<{ label: string; value: boolean }> = [
   { label: "无减脂基础", value: false },
 ];
 const snapshot = ref<DiarySnapshot>();
-const page = ref<"today" | "training" | "progress">("today");
+const page = ref<"today" | "training" | "progress" | "profile">("today");
 const busy = ref(false);
 const message = ref("");
 const selectedGroup = ref("breakfast");
@@ -257,11 +258,12 @@ onMounted(async () => {
   <view class="page-shell">
     <view class="hero">
       <text class="eyebrow">90 天减脂记录</text>
-      <text class="title">{{ page === 'progress' ? '进度' : page === 'training' ? '训练' : heroTitle }}</text>
+      <text class="title">{{ page === 'profile' ? '我的' : page === 'progress' ? '进度' : page === 'training' ? '训练' : heroTitle }}</text>
       <text class="subtitle">只记录计算结果、实际摄入和真实体重</text>
     </view>
 
     <view v-if="message" class="message">{{ message }}</view>
+    <BackupManager v-if="page === 'profile' || !snapshot?.profile" @restored="refresh" />
 
     <view v-if="!snapshot?.profile" class="card">
       <text class="card-title">首次启动 · 建立健康档案</text>
@@ -348,6 +350,7 @@ onMounted(async () => {
         <button role="button" :class="{ selected: page === 'today' }" @click="page = 'today'">今天</button>
         <button role="button" :class="{ selected: page === 'training' }" @click="page = 'training'">训练</button>
         <button role="button" :class="{ selected: page === 'progress' }" @click="page = 'progress'">进度</button>
+        <button role="button" :class="{ selected: page === 'profile' }" @click="page = 'profile'">我的</button>
       </view>
       <view class="card profile-card">
         <view>

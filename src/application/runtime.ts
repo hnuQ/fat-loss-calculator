@@ -5,8 +5,11 @@ import { createFatLossDiary } from "./fatLossDiary";
 import { createFoodLibrary } from "./foodLibrary";
 import { createTrainingDiary } from "./trainingDiary";
 import { createUniTrainingReminders } from "../infrastructure/uniTrainingReminders";
+import { createDiaryBackup } from "./diaryBackup";
+import { secureRandomBytes } from "../infrastructure/uniBackupFiles";
 
 const repository = createUniStorageDiaryRepository();
+export const diaryBackup = createDiaryBackup({ repository, randomBytes: secureRandomBytes });
 export const foodLibrary = createFoodLibrary({ repository });
 
 export const fatLossDiary = createFatLossDiary({
