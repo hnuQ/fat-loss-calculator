@@ -44,7 +44,7 @@ describe("身体记录与真实进度公开用户旅程", () => {
     expect(edited.bodyRecords[0].revision).toBe(2);
     await diary.deleteBodyRecord(id);
     expect((await reopen().openDiary()).bodyRecords).toEqual([]);
-    expect((await repository.read())?.bodyRecords).toEqual([]);
+    expect((await repository.read())?.bodyOverrides?.[0]).toMatchObject({ id, deletedAt: "2026-10-01T12:00:00+08:00" });
   });
 
   it.each<BodyMeasurements>([{}, { weightKg: 0 }, { waistCm: -1 }, { chestCm: NaN }, { hipCm: Infinity }, { thighCm: "文本" as never }, { bodyFatPercent: 100 }, { bodyFatPercent: 0 }, { bodyFatPercent: 99.99 }, { weightKg: 0.001 }, { weightKg: 1e308 }])("拒绝无效测量且不创建记录 %j", async (measurements) => {
@@ -67,14 +67,11 @@ describe("身体记录与真实进度公开用户旅程", () => {
     expect((await diary.openDiary()).isBlankDate).toBe(true);
   });
 
-  it("跨日直接编辑删除被阻止；追加链保留原值、前次有效值、时间原因并更新趋势与摘要", async () => {
+  it("旧追加链保留原值、前次有效值、时间原因并更新趋势与摘要", async () => {
     const { diary, day, repository, reopen } = await setup();
     const saved = await diary.saveBodyRecord({ measurements: { weightKg: 700, bodyFatPercent: 22, waistCm: 800 } });
     const source = saved.bodyRecords[0];
     day("2026-10-02");
-    await expect(diary.saveBodyRecord({ id: source.id, measurements: { weightKg: 70 } })).rejects.toThrow("不能覆盖或删除");
-    await expect(diary.deleteBodyRecord(source.id)).rejects.toThrow("不能覆盖或删除");
-    await expect(diary.saveBodyRecord({ date: source.date, measurements: { weightKg: 70 } })).rejects.toThrow("今天");
     await expect(diary.correctBodyRecord({ id: source.id, measurements: { weightKg: 70 }, reason: "  " })).rejects.toThrow("原因");
     await expect(diary.correctBodyRecord({ id: source.id, measurements: { weightKg: 700, bodyFatPercent: 22, waistCm: 800 }, reason: "无变化" })).rejects.toThrow("相同");
     await diary.correctBodyRecord({ id: source.id, measurements: { weightKg: 70, bodyFatPercent: 22, waistCm: 80 }, reason: " 多录了一个零 " });
@@ -92,17 +89,19 @@ describe("身体记录与真实进度公开用户旅程", () => {
     ]);
   });
 
-  it("当天不允许历史纠错，归档当天不可覆盖；历史归档纠错保持周期隔离", async () => {
+  it("旧接口当天不允许历史纠错；历史归档纠错保持周期隔离，随后可普通删除", async () => {
     const { diary, day } = await setup();
     const record = (await diary.recordWeight({ weightKg: 70 })).bodyRecords[0];
     await expect(diary.correctBodyRecord({ id: record.id, measurements: { weightKg: 69 }, reason: "错误" })).rejects.toThrow("结束日期");
     await diary.archiveActiveCycle();
-    await expect(diary.deleteBodyRecord(record.id)).rejects.toThrow("不能覆盖或删除");
     day("2026-10-02");
     await diary.startCycle({ startDate: "2026-10-02", dayType: "rest" });
     await diary.recordWeight({ weightKg: 68 });
     await diary.correctBodyRecord({ id: record.id, measurements: { weightKg: 69 }, reason: "秤读数录错" });
     expect((await diary.readWeightTrend(record.cycleId)).points.map((point) => point.weightKg)).toEqual([69]);
+    expect((await diary.readWeightTrend()).points.map((point) => point.weightKg)).toEqual([68]);
+    await diary.deleteBodyRecord(record.id);
+    expect((await diary.readWeightTrend(record.cycleId)).points).toEqual([]);
     expect((await diary.readWeightTrend()).points.map((point) => point.weightKg)).toEqual([68]);
   });
 

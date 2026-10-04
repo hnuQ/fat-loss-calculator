@@ -7,10 +7,11 @@ import type { DiaryRepository, DiaryState } from "../domain/diary";
 import { validateBackupState } from "../domain/backupSchema";
 import { migrateLegacyDiaryState } from "./cycleDiary";
 import { systemClock } from "../infrastructure/systemClock";
+import { effectiveBodyRecords } from "../domain/body";
 
 const iterations = 600000;
 const format = "fat-loss-diary-backup";
-const header = z.object({ format: z.literal(format), version: z.literal(1), schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]), createdAt: z.string().refine((value) => Number.isFinite(Date.parse(value))), migration: z.literal("cycle-diary-v1") }).strict();
+const header = z.object({ format: z.literal(format), version: z.literal(1), schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]), createdAt: z.string().refine((value) => Number.isFinite(Date.parse(value))), migration: z.literal("cycle-diary-v1") }).strict();
 const plain = header.extend({ protection: z.literal("none"), state: z.unknown(), checksum: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const encrypted = header.extend({ protection: z.literal("aes-256-gcm"), kdf: z.literal("pbkdf2-sha256"), iterations: z.literal(iterations), salt: z.string().regex(/^[a-f0-9]{32}$/), nonce: z.string().regex(/^[a-f0-9]{24}$/), ciphertext: z.string().regex(/^(?:[a-f0-9]{2}){16,}$/) }).strict();
 const maxFileLength = 20 * 1024 * 1024;
@@ -37,7 +38,7 @@ export function createDiaryBackup(dependencies: { repository: DiaryRepository; r
   return {
     async exportBackup(password = ""): Promise<string> {
       const state = validateBackupState(await dependencies.repository.read() ?? { meals: [], weights: [] });
-      const metadata = { format, version: 1, schemaVersion: 3, createdAt: dependencies.now?.() ?? new Date().toISOString(), migration: "cycle-diary-v1" } as const;
+      const metadata = { format, version: 1, schemaVersion: 4, createdAt: dependencies.now?.() ?? new Date().toISOString(), migration: "cycle-diary-v1" } as const;
       if (!password) return JSON.stringify({ ...metadata, protection: "none", state, checksum: checksum(metadata, state) });
       if (password.length < 8) throw new Error("备份密码至少 8 个字符；请妥善保存，无法找回");
       const salt = await dependencies.randomBytes(16);
@@ -94,8 +95,8 @@ function csv(rows: unknown[][]): string {
 export function exportDiaryCsv(state: DiaryState, kind: "body" | "meals" | "training"): string {
   if (kind === "training") return csv([["记录ID", "周期ID", "日期", "计划ID", "训练名称", "训练内容", "完成", "感受"], ...(state.training?.records ?? []).map((record) => [record.id, record.cycleId, record.date, record.planId, record.title, record.content, record.completed ? "是" : "否", record.feeling])]);
   if (kind === "body") {
-    const records = state.bodyRecords ?? state.weights;
-    return csv([["记录ID", "周期ID", "日期", "版本", "纠错ID", "原因", "纠错时间", "体重kg", "体脂率%", "腰围cm", "胸围cm", "臀围cm", "大腿围cm"], ...records.map((record) => [record.id, record.cycleId, record.date, "原始", "", "", "", ...["weightKg", "bodyFatPercent", "waistCm", "chestCm", "hipCm", "thighCm"].map((key) => (record as unknown as Record<string, unknown>)[key])]), ...(state.bodyCorrections ?? []).map((item) => [item.sourceBodyId, item.corrected.cycleId, item.corrected.date, "纠错", item.id, item.reason, item.createdAt, item.corrected.weightKg, item.corrected.bodyFatPercent, item.corrected.waistCm, item.corrected.chestCm, item.corrected.hipCm, item.corrected.thighCm])]);
+    const records = state.bodyRecords ? effectiveBodyRecords(state) : state.weights;
+    return csv([["记录ID", "周期ID", "日期", "版本", "纠错ID", "原因", "纠错时间", "体重kg", "体脂率%", "腰围cm", "胸围cm", "臀围cm", "大腿围cm"], ...records.map((record) => [record.id, record.cycleId, record.date, "有效", "", "", "", ...["weightKg", "bodyFatPercent", "waistCm", "chestCm", "hipCm", "thighCm"].map((key) => (record as unknown as Record<string, unknown>)[key])]), ...(state.bodyCorrections ?? []).map((item) => [item.sourceBodyId, item.corrected.cycleId, item.corrected.date, "历史审计（非当前值）", item.id, item.reason, item.createdAt, item.corrected.weightKg, item.corrected.bodyFatPercent, item.corrected.waistCm, item.corrected.chestCm, item.corrected.hipCm, item.corrected.thighCm])]);
   }
   const marked = (cycleId: string | undefined, date: string) => (state.indulgenceDays ?? []).some((record) => record.cycleId === cycleId && record.date === date);
   const mealRow = (record: DiaryState["meals"][number], version: string, correctionId = "", reason = "", time = "") => [record.id, record.cycleId, record.date, version, correctionId, reason, time, state.mealGroups?.find((group) => group.id === record.mealSlot)?.name ?? record.mealSlot, record.foodName, record.amount, record.unit === "g" ? "克" : "个", record.nutrients.carbohydrateGrams, record.nutrients.proteinGrams, record.nutrients.fatGrams, record.nutrients.energyKcal, marked(record.cycleId, record.date) ? "是" : "否"];

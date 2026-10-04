@@ -55,7 +55,7 @@ async function restore() {
     <textarea v-model="content" :disabled="busy" placeholder="也可在此粘贴完整 JSON 备份；CSV 无法恢复" :maxlength="20971520" />
     <button :disabled="busy || !content.trim()" @click="restore">确认替换并恢复</button>
     <text class="heading">CSV 查看与分享</text>
-    <text>UTF-8 CSV 仅用于查看或分享，包含原始记录和纠错行，不能恢复应用。请自行选择可信的分享对象。</text>
+    <text>UTF-8 CSV 仅用于查看或分享，不能恢复应用。身体 CSV 区分当前有效值和旧纠错审计；餐食 CSV 保留原始记录和纠错行。请自行选择可信的分享对象。</text>
     <view class="row"><button :disabled="busy" @click="exportFile('body')">身体 CSV</button><button :disabled="busy" @click="exportFile('meals')">餐食 CSV</button><button :disabled="busy" @click="exportFile('training')">训练 CSV</button></view>
     <button v-if="lastFile" @click="shareBackupFile(lastFile)">分享刚导出的文件</button>
     <text v-if="message" role="status">{{ message }}</text>

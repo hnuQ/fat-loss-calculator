@@ -568,7 +568,7 @@ onMounted(async () => {
 
       <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" @add="addFood" />
       </template>
-      <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
+      <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
       <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
       <view class="platform-note">

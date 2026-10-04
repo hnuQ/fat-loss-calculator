@@ -4,31 +4,32 @@ import { fatLossDiary } from "../application/runtime";
 import { bodyFields, bodySummary } from "../domain/body";
 import type { BodyMeasurements, BodyRecord, DiarySnapshot } from "../domain/diary";
 import { parseFoodNumber } from "../domain/foodLibrary";
-import { buildWeightTrend } from "../domain/weightTrend";
+import { buildBodyTrend } from "../domain/bodyTrend";
 import WeightTrendCanvas from "./WeightTrendCanvas.vue";
 
-const props = defineProps<{ snapshot: DiarySnapshot; disabled: boolean; canEdit: boolean }>();
+const props = defineProps<{ snapshot: DiarySnapshot; disabled: boolean }>();
 const emit = defineEmits<{ (event: "change", snapshot: DiarySnapshot): void; (event: "working", value: boolean): void }>();
 const summary = computed(() => bodySummary(props.snapshot.bodyRecords));
-const trend = computed(() => props.snapshot.selectedCycle ? buildWeightTrend(props.snapshot.weights, props.snapshot.selectedCycle.startDate, props.snapshot.profile?.targetWeightKg) : undefined);
+const metric = ref<keyof BodyMeasurements>("weightKg");
+const trend = computed(() => props.snapshot.selectedCycle ? buildBodyTrend(props.snapshot.bodyRecords, props.snapshot.selectedCycle.startDate, metric.value, props.snapshot.profile?.targetWeightKg) : undefined);
+const recordDate = ref(props.snapshot.selectedDate);
+const latestDate = computed(() => props.snapshot.selectedCycle ? [props.snapshot.selectedCycle.endDate, props.snapshot.today].sort()[0] : props.snapshot.today);
+const canSave = computed(() => !!props.snapshot.selectedCycle && recordDate.value <= props.snapshot.today);
 const records = computed(() => [...props.snapshot.bodyRecords].sort((left, right) => right.date.localeCompare(left.date) || right.createdAt.localeCompare(left.createdAt)));
 const form = reactive<Record<keyof BodyMeasurements, string>>({ weightKg: "", bodyFatPercent: "", waistCm: "", chestCm: "", hipCm: "", thighCm: "" });
 const editing = ref<string>();
-const correcting = ref<string>();
-const reason = ref("");
 const audit = ref<string>();
 const pendingDelete = ref<string>();
 const busy = ref(false);
 const message = ref("");
 function reset() {
-  editing.value = undefined; correcting.value = undefined; pendingDelete.value = undefined; reason.value = "";
+  editing.value = undefined; pendingDelete.value = undefined; recordDate.value = props.snapshot.selectedDate;
   for (const field of bodyFields) form[field.key] = "";
 }
 watch([() => props.snapshot.selectedCycle?.id, () => props.snapshot.selectedDate], () => { reset(); audit.value = undefined; message.value = ""; });
-function begin(record: BodyRecord, correction = false) {
+function begin(record: BodyRecord) {
   reset();
-  if (correction) correcting.value = record.id;
-  else editing.value = record.id;
+  editing.value = record.id; recordDate.value = record.date;
   for (const field of bodyFields) form[field.key] = record[field.key] === undefined ? "" : String(record[field.key]);
 }
 function measurements(): BodyMeasurements {
@@ -52,24 +53,25 @@ async function run(action: () => Promise<DiarySnapshot>) {
 }
 async function save() {
   await run(async () => {
-    const result = correcting.value
-      ? await fatLossDiary.correctBodyRecord({ id: correcting.value, measurements: measurements(), reason: reason.value })
-      : await fatLossDiary.saveBodyRecord({ id: editing.value, date: props.snapshot.selectedDate, measurements: measurements() });
-    message.value = correcting.value ? "历史身体纠错已追加，原始记录保留" : "身体记录已保存";
+    const result = await fatLossDiary.saveBodyRecord({ id: editing.value, cycleId: props.snapshot.selectedCycle?.id, date: recordDate.value, measurements: measurements() });
+    message.value = "身体记录已保存";
     reset(); return result;
   });
 }
 async function remove(id: string) {
-  await run(async () => { const result = await fatLossDiary.deleteBodyRecord(id); reset(); message.value = "当天身体记录已删除"; return result; });
+  await run(async () => { const result = await fatLossDiary.deleteBodyRecord(id, props.snapshot.selectedCycle?.id); reset(); message.value = "身体记录已删除"; return result; });
 }
 </script>
 
 <template>
   <view class="body-progress">
     <view class="card">
-      <text class="title">90 天体重趋势</text>
+      <text class="title">90 天身体趋势</text>
+      <view class="actions metric-switch">
+        <button v-for="field in bodyFields" :key="field.key" role="button" :class="{ primary: metric === field.key }" :aria-label="`查看${field.label}趋势`" @click="metric = field.key">{{ field.label }}（{{ field.unit }}）</button>
+      </view>
       <WeightTrendCanvas v-if="trend" :trend="trend" />
-      <text class="meta">只显示实际称重日期和 kg 数值，不补齐空白日期，不生成预测。</text>
+      <text class="meta">只显示实际测量日期及所选指标，不补齐空白日期，不生成预测。</text>
     </view>
     <view class="card">
       <text class="title">阶段摘要</text>
@@ -81,8 +83,14 @@ async function remove(id: string) {
         <text v-else-if="item.count === 1" class="meta">仅一次测量，暂无阶段差值</text>
       </view>
     </view>
-    <view v-if="canEdit || correcting" class="card editor">
-      <text class="title">{{ correcting ? '修正历史身体记录' : editing ? '编辑当天身体记录' : '记录今天的身体数据' }}</text>
+    <view v-if="snapshot.selectedCycle" class="card editor">
+      <text class="title">{{ editing ? '编辑身体记录' : '补录身体数据' }}</text>
+      <label>测量日期
+        <picker mode="date" :value="recordDate" :start="snapshot.selectedCycle.startDate" :end="latestDate" :disabled="busy || disabled" @change="recordDate = $event.detail.value">
+          <view class="date-picker">{{ recordDate }}</view>
+        </picker>
+      </label>
+      <text class="meta">日期须在所选周期内且不晚于今天；历史及归档周期也可补录、编辑和删除。</text>
       <text class="meta">可只填写实际测量项；留空表示该条未测量。统一保留一位小数。</text>
       <view class="field-grid">
         <label v-for="field in bodyFields" :key="field.key">
@@ -90,33 +98,31 @@ async function remove(id: string) {
           <input v-model="form[field.key]" type="digit" :aria-label="`身体${field.label}（${field.unit}）`" :placeholder="`${field.label}，未测量可留空`" />
         </label>
       </view>
-      <label v-if="correcting">明显录入错误的原因 *<input v-model="reason" aria-label="身体纠错原因" placeholder="请说明录入错误及核对依据" /></label>
       <view class="actions">
-        <button role="button" :disabled="busy || disabled" class="primary" @click="save">{{ correcting ? '追加身体纠错' : editing ? '保存身体修改' : '保存身体记录' }}</button>
-        <button role="button" v-if="editing || correcting" @click="reset">取消身体编辑</button>
+        <button role="button" :disabled="busy || disabled || !canSave" class="primary" @click="save">{{ editing ? '保存身体修改' : '保存身体记录' }}</button>
+        <button role="button" v-if="editing" :disabled="busy || disabled" @click="reset">取消身体编辑</button>
       </view>
     </view>
     <text v-if="message" role="status" class="notice">{{ message }}</text>
     <view class="card">
       <text class="title">身体历史记录</text>
-      <text class="meta">当天可编辑和删除；结束日期只能为明显录入错误追加纠错。图表及摘要使用最新有效值，原始值可审计。本地日期锁只增加修改阻力，不具备防篡改安全性。</text>
+      <text class="meta">本周期记录可直接编辑和删除，无需纠错原因；图表及摘要显示当前有效值，旧纠错仅保留为历史审计。</text>
       <text v-if="!records.length" class="meta">本周期暂无身体记录</text>
       <view v-for="record in records" :key="record.id" class="history-entry">
         <text class="entry-title">{{ record.date }}</text>
         <text class="meta">{{ describe(record) }}</text>
-        <text v-if="corrections(record.id).length" class="meta">有效修正结果 · 已追加 {{ corrections(record.id).length }} 次纠错</text>
+        <text v-if="corrections(record.id).length" class="meta">保留 {{ corrections(record.id).length }} 次旧纠错审计</text>
         <view class="actions">
-          <template v-if="canEdit && record.date === snapshot.today && !corrections(record.id).length">
-            <button role="button" :disabled="busy || disabled" :aria-label="`编辑身体记录 ${record.id}`" @click="begin(record)">编辑当天记录</button>
-            <button role="button" :disabled="busy || disabled" :aria-label="`删除身体记录 ${record.id}`" @click="pendingDelete = record.id">删除当天记录</button>
+          <template v-if="record.date <= snapshot.today">
+            <button role="button" :disabled="busy || disabled" :aria-label="`编辑身体记录 ${record.id}`" @click="begin(record)">编辑身体记录</button>
+            <button role="button" :disabled="busy || disabled" :aria-label="`删除身体记录 ${record.id}`" @click="pendingDelete = record.id">删除身体记录</button>
           </template>
-          <button role="button" v-if="record.date < snapshot.today" :disabled="busy || disabled" :aria-label="`纠错身体记录 ${record.id}`" @click="begin(record, true)">历史身体纠错</button>
           <button role="button" :aria-label="`审计身体记录 ${record.id}`" @click="audit = audit === record.id ? undefined : record.id">{{ audit === record.id ? '收起' : '查看' }}身体审计</button>
         </view>
         <view v-if="pendingDelete === record.id" class="actions">
-          <text>确认删除当天这条身体记录？</text>
+          <text>确认删除 {{ record.date }} 这条身体记录？</text>
           <button role="button" :disabled="busy || disabled" @click="remove(record.id)">确认删除身体记录</button>
-          <button role="button" @click="pendingDelete = undefined">取消身体删除</button>
+          <button role="button" :disabled="busy || disabled" @click="pendingDelete = undefined">取消身体删除</button>
         </view>
         <view v-if="audit === record.id" class="audit">
           <text class="meta">原始值：{{ describe(snapshot.originalBodyRecords.find((source) => source.id === record.id)!) }} · 来源 {{ record.id }}</text>
@@ -140,6 +146,8 @@ async function remove(id: string) {
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18rpx; }
 label { display: flex; flex-direction: column; gap: 12rpx; font-size: 24rpx; margin-bottom: 18rpx; }
 input { min-height: 76rpx; min-width: 0; padding: 0 16rpx; border: 1rpx solid #dce4de; border-radius: 18rpx; background: #f9fbfa; }
+.date-picker { padding: 20rpx 16rpx; border: 1rpx solid #dce4de; border-radius: 18rpx; background: #f9fbfa; }
+.metric-switch { margin-bottom: 20rpx; }
 .actions { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 18rpx; align-items: center; }
 button { margin: 0; font-size: 24rpx; color: #315e47; background: #f7faf8; }
 .primary { color: white; background: #1f7a4c; }

@@ -17,7 +17,10 @@ const food = z.object(foodFields).strict();
 const customFood = z.object({ ...foodFields, ...metadata, deletedAt: timestamp.optional() }).strict();
 const meal = z.object({ id, cycleId: id.optional(), date, mealSlot: id, foodId: id, foodName: id, amount: positive, unit: z.enum(["g", "item"]), nutrients, foodSnapshot: z.union([food, customFood]).optional() }).strict();
 const measurements = { weightKg: positive.optional(), bodyFatPercent: positive.lt(100).optional(), waistCm: positive.optional(), chestCm: positive.optional(), hipCm: positive.optional(), thighCm: positive.optional() };
-const body = z.object({ id, cycleId: id.optional(), date, ...metadata, ...measurements }).strict().refine((value) => Object.keys(measurements).some((key) => value[key as keyof typeof value] !== undefined));
+const bodyFields = { id, cycleId: id.optional(), date, ...metadata, ...measurements };
+const hasMeasurement = (value: Record<string, unknown>) => Object.keys(measurements).some((key) => value[key] !== undefined);
+const body = z.object(bodyFields).strict().refine(hasMeasurement);
+const bodyOverride = z.object({ ...bodyFields, deletedAt: timestamp.optional() }).strict().refine(hasMeasurement);
 const correction = { id, ...metadata, previousCorrectionId: id.optional(), reason: text.trim().min(1) };
 const mealCorrection = z.object({ ...correction, sourceMealId: id, original: meal, previous: meal, corrected: meal, previousDayEnergyKcal: number.nonnegative(), correctedDayEnergyKcal: number.nonnegative(), deletedAt: timestamp.optional() }).strict();
 const bodyCorrection = z.object({ ...correction, sourceBodyId: id, original: body, previous: body, corrected: body }).strict();
@@ -39,6 +42,7 @@ export const diaryStateSchema = z.object({
   foodLibrary: z.object({ customFoods: z.array(customFood), favoriteIds: z.array(id), recentIds: z.array(id) }).strict().optional(),
   mealGroups: z.array(group).optional(), mealCorrections: z.array(mealCorrection).optional(),
   bodyRecords: z.array(body).optional(), bodyCorrections: z.array(bodyCorrection).optional(),
+  bodyOverrides: z.array(bodyOverride).optional(),
   training: z.object({ plans: z.array(trainingPlan), records: z.array(trainingRecord), schedules: z.array(trainingSchedule).optional(), reminder }).strict().optional(),
 }).strict();
 
@@ -46,7 +50,7 @@ export function validateBackupState(input: unknown): DiaryState {
   const parsed = diaryStateSchema.safeParse(input);
   if (!parsed.success) throw new Error(`备份数据不完整或字段无效：${parsed.error.issues[0].path.join(".") || "根对象"}`);
   const state = parsed.data as DiaryState;
-  for (const records of [state.cycles, state.meals, state.weights, state.bodyRecords, state.mealGroups, state.foodLibrary?.customFoods, state.training?.plans, state.training?.records, state.training?.schedules, state.mealCorrections, state.bodyCorrections]) {
+  for (const records of [state.cycles, state.meals, state.weights, state.bodyRecords, state.bodyOverrides, state.mealGroups, state.foodLibrary?.customFoods, state.training?.plans, state.training?.records, state.training?.schedules, state.mealCorrections, state.bodyCorrections]) {
     if (records && new Set(records.map((record) => record.id)).size !== records.length) throw new Error("备份包含重复记录标识");
   }
   if ((state.cycles?.filter((value) => value.status === "active").length ?? 0) > 1) throw new Error("备份包含多个进行中的周期");
@@ -56,9 +60,14 @@ export function validateBackupState(input: unknown): DiaryState {
     if (cycle.endDate !== addCalendarDays(cycle.startDate, 89)) throw new Error("备份周期不是连续 90 个自然日");
   }
   if (state.cycles) {
-    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.training?.records ?? []), ...(state.training?.schedules ?? []), ...(state.dayTypeRecords ?? []), ...(state.indulgenceDays ?? [])]) {
+    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.bodyOverrides ?? []), ...(state.training?.records ?? []), ...(state.training?.schedules ?? []), ...(state.dayTypeRecords ?? []), ...(state.indulgenceDays ?? [])]) {
       if (record.cycleId && !state.cycles.some((cycle) => cycle.id === record.cycleId && record.date >= cycle.startDate && record.date <= cycle.endDate)) throw new Error("备份记录的周期引用无效");
     }
+  }
+  for (const override of state.bodyOverrides ?? []) {
+    const source = state.bodyRecords?.find((record) => record.id === override.id);
+    const latest = [...(state.bodyCorrections ?? [])].reverse().find((record) => record.sourceBodyId === override.id)?.corrected ?? source;
+    if (!source || (source.cycleId && override.cycleId !== source.cycleId) || !state.cycles?.some((cycle) => cycle.id === override.cycleId && source.date >= cycle.startDate && source.date <= cycle.endDate) || override.ownerId !== source.ownerId || override.createdAt !== source.createdAt || override.revision <= latest!.revision) throw new Error("备份身体编辑引用或版本无效");
   }
   if (state.indulgenceDays?.length && !state.cycles) throw new Error("备份放纵日缺少关联周期");
   if (state.training?.schedules?.length && !state.cycles) throw new Error("备份训练排期缺少关联周期");

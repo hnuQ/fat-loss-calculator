@@ -156,6 +156,11 @@ export interface BodyRecord extends BodyMeasurements {
   syncState: "local";
 }
 
+/** Current edits leave legacy sources and correction audits intact. */
+export interface BodyOverride extends BodyRecord {
+  deletedAt?: string;
+}
+
 export interface BodyCorrection {
   id: string;
   ownerId: string;
@@ -175,6 +180,7 @@ export interface DiaryState {
   training?: TrainingState;
   bodyRecords?: BodyRecord[];
   bodyCorrections?: BodyCorrection[];
+  bodyOverrides?: BodyOverride[];
   mealCorrections?: MealCorrection[];
   mealGroups?: MealGroup[];
   foodLibrary?: FoodLibraryState;

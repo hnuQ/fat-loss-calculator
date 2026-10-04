@@ -1,4 +1,15 @@
-import type { BodyMeasurements, BodyRecord } from "./diary";
+import type { BodyMeasurements, BodyRecord, DiaryState } from "./diary";
+
+export function effectiveBodyRecord(state: DiaryState, source: BodyRecord): BodyRecord {
+  return state.bodyOverrides?.find((record) => record.id === source.id)
+    ?? [...(state.bodyCorrections ?? [])].reverse().find((correction) => correction.sourceBodyId === source.id)?.corrected
+    ?? source;
+}
+
+export function effectiveBodyRecords(state: DiaryState): BodyRecord[] {
+  return (state.bodyRecords ?? []).filter((source) => !state.bodyOverrides?.some((record) => record.id === source.id && record.deletedAt))
+    .map((source) => effectiveBodyRecord(state, source));
+}
 
 export const bodyFields: Array<{ key: keyof BodyMeasurements; label: string; unit: string }> = [
   { key: "weightKg", label: "体重", unit: "kg" },
