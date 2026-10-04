@@ -226,6 +226,52 @@ async function viewCycle(cycle: FatLossCycle): Promise<void> {
   await openDate(date, cycle.id);
 }
 
+async function deleteCycle(cycle: FatLossCycle): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  message.value = "";
+  try {
+    const confirmed = await new Promise<boolean>((resolve, reject) => {
+      uni.showModal({
+        title: "删除归档周期",
+        content: `${cycle.startDate} 至 ${cycle.endDate}。将同时删除该周期的日型、放纵日标记、餐食与纠错、身体与纠错及训练记录。`,
+        confirmText: "删除周期",
+        cancelText: "取消",
+        success: (result) => resolve(result.confirm),
+        fail: reject,
+      });
+    });
+    if (!confirmed) return;
+    snapshot.value = await fatLossDiary.deleteArchivedCycle(cycle.id, {
+      cycleId: snapshot.value?.selectedCycle?.id,
+      date: snapshot.value?.selectedDate,
+    });
+    cycleForm.startDate = snapshot.value.today;
+    message.value = "归档周期及关联记录已删除";
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "删除周期失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleIndulgenceDay(): Promise<void> {
+  if (busy.value || !snapshot.value?.selectedCycle) return;
+  busy.value = true;
+  message.value = "";
+  try {
+    snapshot.value = await fatLossDiary.setIndulgenceDay({
+      cycleId: snapshot.value.selectedCycle.id,
+      date: snapshot.value.selectedDate,
+      enabled: !snapshot.value.isIndulgenceDay,
+    });
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : "保存放纵日标记失败";
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function addFood(food: Food, amount: number): Promise<void> {
   if (!canRecordToday.value || !selectedGroup.value || busy.value) return;
   busy.value = true;
@@ -407,14 +453,13 @@ onMounted(async () => {
 
       <view v-if="snapshot.cycles.some((cycle) => cycle.status === 'archived')" class="card">
         <text class="card-title">已归档周期</text>
-        <button
+        <view
           v-for="cycle in snapshot.cycles.filter((item) => item.status === 'archived')"
           :key="cycle.id"
-          class="history-button"
-          @click="viewCycle(cycle)"
         >
-          {{ cycle.startDate }} 至 {{ cycle.endDate }} · 查看
-        </button>
+          <button class="history-button" :disabled="busy" @click="viewCycle(cycle)">{{ cycle.startDate }} 至 {{ cycle.endDate }} · 查看</button>
+          <button class="archive-button" :disabled="busy" @click="deleteCycle(cycle)">删除归档周期</button>
+        </view>
       </view>
 
       <view v-if="snapshot.selectedCycle" class="card calendar-card">
@@ -461,6 +506,16 @@ onMounted(async () => {
           </button>
         </view>
         <text v-else class="profile-meta">日型：{{ dayTypeOptions.find((option) => option.value === snapshot?.dayType)?.label ?? '未记录' }}</text>
+        <button
+          v-if="snapshot.selectedCycle.status === 'active' && snapshot.selectedDate >= snapshot.today"
+          class="day-type-button"
+          :class="{ selected: snapshot.isIndulgenceDay }"
+          :disabled="busy"
+          :aria-pressed="snapshot.isIndulgenceDay"
+          @click="toggleIndulgenceDay"
+        >{{ snapshot.isIndulgenceDay ? '取消放纵日标记' : '标记放纵日' }}</button>
+        <text v-else-if="snapshot.isIndulgenceDay" class="profile-meta">放纵日 · 标记只读</text>
+        <text v-if="snapshot.isIndulgenceDay" class="profile-meta">餐食可自愿记录；已记录摄入不代表全天总摄入，未记录不表示零摄入。</text>
       </view>
 
       <view v-if="snapshot.selectedCycle && snapshot.isBlankDate" class="card blank-card">
@@ -469,8 +524,8 @@ onMounted(async () => {
       </view>
 
       <template v-if="page === 'today'">
-      <view v-if="snapshot.baseline" class="card energy-card" :class="`status-${energyStatus}`">
-        <view class="energy-ring" :style="{ '--progress': `${actualPercentage * 3.6}deg` }">
+      <view v-if="snapshot.baseline || snapshot.isIndulgenceDay" class="card energy-card" :class="energyStatus ? `status-${energyStatus}` : ''">
+        <view class="energy-ring" :style="snapshot.isIndulgenceDay ? { background: '#e9eeeb' } : { '--progress': `${actualPercentage * 3.6}deg` }">
           <view class="energy-ring-inner">
             <text class="energy-number">{{ snapshot.actual.energyKcal }}</text>
             <text class="energy-unit">kcal 已记录</text>
@@ -478,31 +533,31 @@ onMounted(async () => {
         </view>
         <view class="energy-copy">
           <text class="card-title">当日能量</text>
-          <text>营养基准 {{ snapshot.baseline?.energyKcal }} kcal</text>
+          <text>营养基准 {{ snapshot.baseline ? `${snapshot.baseline.energyKcal} kcal` : '未记录日型' }}</text>
           <text>用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.energyKcal} kcal` : '未设置' }}</text>
-          <text>实际摄入 {{ snapshot.actual.energyKcal }} kcal</text>
-          <text>剩余额 {{ snapshot.remaining?.energyKcal }} kcal</text>
+          <text>{{ snapshot.isIndulgenceDay ? '已记录摄入' : '实际摄入' }} {{ snapshot.actual.energyKcal }} kcal</text>
+          <text v-if="snapshot.remaining">剩余额 {{ snapshot.remaining.energyKcal }} kcal</text>
         </view>
       </view>
 
       <view v-if="snapshot.baseline" class="macro-grid">
         <view class="macro-card">
           <text>碳水</text>
-          <text class="macro-value">实际 {{ snapshot.actual.carbohydrateGrams }}g</text>
+          <text class="macro-value">{{ snapshot.isIndulgenceDay ? '已记录' : '实际' }} {{ snapshot.actual.carbohydrateGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.carbohydrateGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.carbohydrateGrams}g` : '未设置' }}</text>
-          <text class="macro-meta">剩余额 {{ snapshot.remaining?.carbohydrateGrams }}g</text>
+          <text v-if="snapshot.remaining" class="macro-meta">剩余额 {{ snapshot.remaining.carbohydrateGrams }}g</text>
         </view>
         <view class="macro-card">
           <text>蛋白质</text>
-          <text class="macro-value">实际 {{ snapshot.actual.proteinGrams }}g</text>
+          <text class="macro-value">{{ snapshot.isIndulgenceDay ? '已记录' : '实际' }} {{ snapshot.actual.proteinGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.proteinGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.proteinGrams}g` : '未设置' }}</text>
-          <text class="macro-meta">剩余额 {{ snapshot.remaining?.proteinGrams }}g</text>
+          <text v-if="snapshot.remaining" class="macro-meta">剩余额 {{ snapshot.remaining.proteinGrams }}g</text>
         </view>
         <view class="macro-card">
           <text>脂肪</text>
-          <text class="macro-value">实际 {{ snapshot.actual.fatGrams }}g</text>
+          <text class="macro-value">{{ snapshot.isIndulgenceDay ? '已记录' : '实际' }} {{ snapshot.actual.fatGrams }}g</text>
           <text class="macro-meta">基准 {{ snapshot.baseline?.fatGrams }}g · 用户目标 {{ snapshot.userTarget ? `${snapshot.userTarget.fatGrams}g` : '未设置' }}</text>
-          <text class="macro-meta">剩余额 {{ snapshot.remaining?.fatGrams }}g</text>
+          <text v-if="snapshot.remaining" class="macro-meta">剩余额 {{ snapshot.remaining.fatGrams }}g</text>
         </view>
       </view>
 

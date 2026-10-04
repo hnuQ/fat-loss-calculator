@@ -30,6 +30,7 @@ const reminder = z.object({ enabled: z.boolean(), weekdays: z.array(number.int()
 export const diaryStateSchema = z.object({
   profile: profile.optional(), cycles: z.array(cycle).optional(),
   dayTypeRecords: z.array(z.object({ cycleId: id, date, dayType, baseline: nutrients }).strict()).optional(),
+  indulgenceDays: z.array(z.object({ cycleId: id, date }).strict()).optional(),
   dayType: dayType.optional(), baseline: nutrients.optional(), userTarget: nutrients.optional(),
   meals: z.array(meal), weights: z.array(z.object({ id, cycleId: id.optional(), date, weightKg: positive }).strict()),
   foodLibrary: z.object({ customFoods: z.array(customFood), favoriteIds: z.array(id), recentIds: z.array(id) }).strict().optional(),
@@ -46,14 +47,17 @@ export function validateBackupState(input: unknown): DiaryState {
     if (records && new Set(records.map((record) => record.id)).size !== records.length) throw new Error("备份包含重复记录标识");
   }
   if ((state.cycles?.filter((value) => value.status === "active").length ?? 0) > 1) throw new Error("备份包含多个进行中的周期");
+  const indulgenceKeys = (state.indulgenceDays ?? []).map((record) => `${record.cycleId}/${record.date}`);
+  if (new Set(indulgenceKeys).size !== indulgenceKeys.length) throw new Error("备份包含重复放纵日标记");
   for (const cycle of state.cycles ?? []) {
     if (cycle.endDate !== addCalendarDays(cycle.startDate, 89)) throw new Error("备份周期不是连续 90 个自然日");
   }
   if (state.cycles) {
-    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.training?.records ?? []), ...(state.dayTypeRecords ?? [])]) {
+    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.training?.records ?? []), ...(state.dayTypeRecords ?? []), ...(state.indulgenceDays ?? [])]) {
       if (record.cycleId && !state.cycles.some((cycle) => cycle.id === record.cycleId && record.date >= cycle.startDate && record.date <= cycle.endDate)) throw new Error("备份记录的周期引用无效");
     }
   }
+  if (state.indulgenceDays?.length && !state.cycles) throw new Error("备份放纵日缺少关联周期");
   for (const [sources, corrections, sourceKey] of [[state.meals, state.mealCorrections ?? [], "sourceMealId"], [state.bodyRecords ?? [], state.bodyCorrections ?? [], "sourceBodyId"]] as const) {
     const seen = new Map<string, string>();
     const previousValues = new Map<string, unknown>();

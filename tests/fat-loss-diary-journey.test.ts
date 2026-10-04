@@ -136,7 +136,7 @@ describe("减脂记录公开用户旅程", () => {
       currentWeightKg: 69,
     });
 
-    expect(updated.profile?.cycleStartDate).toBe("2026-09-29");
+    expect(updated.activeCycle?.startDate).toBe("2026-09-29");
   });
 
   it("拒绝未成年人，且不会保存未完成的健康档案", async () => {

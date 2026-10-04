@@ -45,6 +45,11 @@ export interface DayTypeRecord {
   baseline: NutritionBaseline;
 }
 
+export interface IndulgenceDay {
+  cycleId: string;
+  date: string;
+}
+
 export interface Nutrients {
   carbohydrateGrams: number;
   proteinGrams: number;
@@ -176,6 +181,7 @@ export interface DiaryState {
   profile?: HealthProfile;
   cycles?: FatLossCycle[];
   dayTypeRecords?: DayTypeRecord[];
+  indulgenceDays?: IndulgenceDay[];
   /** @deprecated 仅用于迁移 Issue #4 创建的本地状态。 */
   dayType?: DayType;
   /** @deprecated 仅用于迁移 Issue #4 创建的本地状态。 */
@@ -215,6 +221,7 @@ export interface PlatformCapabilities {
 }
 
 export interface DiarySnapshot {
+  isIndulgenceDay: boolean;
   trainingRecords: TrainingRecord[];
   bodyRecords: BodyRecord[];
   originalBodyRecords: BodyRecord[];

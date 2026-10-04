@@ -4,6 +4,7 @@ import type {
   BodyRecord,
   BodyCorrection,
   DayTypeRecord,
+  IndulgenceDay,
   DiaryRepository,
   DiarySnapshot,
   DiaryState,
@@ -62,6 +63,8 @@ export interface FatLossDiary {
   establishProfile(input: EstablishProfileInput): Promise<DiarySnapshot>;
   startCycle(input: { startDate: string; dayType: DayType }): Promise<DiarySnapshot>;
   archiveActiveCycle(): Promise<DiarySnapshot>;
+  deleteArchivedCycle(cycleId: string, selection?: DiaryDateSelection): Promise<DiarySnapshot>;
+  setIndulgenceDay(input: { cycleId: string; date: string; enabled: boolean }): Promise<DiarySnapshot>;
   setDayType(input: {
     cycleId: string;
     date: string;
@@ -98,6 +101,7 @@ type NormalizedDiaryState = Omit<DiaryState, "cycles" | "dayTypeRecords" | "meal
   mealGroups: MealGroup[];
   cycles: FatLossCycle[];
   dayTypeRecords: DayTypeRecord[];
+  indulgenceDays: IndulgenceDay[];
 };
 
 function roundToOneDecimal(value: number): number {
@@ -185,6 +189,10 @@ function normalizeState(
     state.dayTypeRecords = [];
     changed = true;
   }
+  if (!Array.isArray(state.indulgenceDays)) {
+    state.indulgenceDays = [];
+    changed = true;
+  }
 
   const legacyStartDate = state.profile?.cycleStartDate;
   if (legacyStartDate && state.cycles.length === 0) {
@@ -209,6 +217,12 @@ function normalizeState(
         baseline: state.baseline,
       });
     }
+    changed = true;
+  }
+
+  // 迁移字段消费一次；删除最后一个周期后不得重新生成旧周期。
+  if (state.profile?.cycleStartDate) {
+    delete state.profile.cycleStartDate;
     changed = true;
   }
 
@@ -406,7 +420,8 @@ function toSnapshot(
     (record) => record.date === selectedDate,
   );
   const actual = sumNutrients(meals.map((meal) => meal.nutrients));
-  const remaining = dayTypeRecord
+  const isIndulgenceDay = state.indulgenceDays.some((record) => record.cycleId === selectedCycle?.id && record.date === selectedDate);
+  const remaining = dayTypeRecord && !isIndulgenceDay
     ? {
         carbohydrateGrams: roundToOneDecimal(
           dayTypeRecord.baseline.carbohydrateGrams - actual.carbohydrateGrams,
@@ -424,6 +439,7 @@ function toSnapshot(
     : undefined;
 
   return {
+    isIndulgenceDay,
     trainingRecords: selectedCycle ? trainingState(state.training).records.filter((record) => record.cycleId === selectedCycle.id && record.date === selectedDate) : [],
     bodyRecords,
     originalBodyRecords,
@@ -434,7 +450,7 @@ function toSnapshot(
       const groupMeals = meals.filter((meal) => meal.mealSlot === group.id);
       return { ...group, meals: groupMeals, actual: sumNutrients(groupMeals.map((meal) => meal.nutrients)) };
     }),
-    energyStatus: dayTypeRecord ? calorieStatus(actual.energyKcal, dayTypeRecord.baseline.energyKcal) : undefined,
+    energyStatus: dayTypeRecord && !isIndulgenceDay ? calorieStatus(actual.energyKcal, dayTypeRecord.baseline.energyKcal) : undefined,
     profile: state.profile,
     cycles: state.cycles,
     activeCycle: activeCycleOf(state),
@@ -444,7 +460,7 @@ function toSnapshot(
     dateStrip: buildDateStrip(cycleDates, selectedDate),
     cycleDates,
     isBlankDate:
-      !dayTypeRecord && meals.length === 0 && !bodyRecords.some((record) => record.date === selectedDate) && !trainingState(state.training).records.some((record) => record.cycleId === selectedCycle?.id && record.date === selectedDate),
+      !isIndulgenceDay && !dayTypeRecord && meals.length === 0 && !bodyRecords.some((record) => record.date === selectedDate) && !trainingState(state.training).records.some((record) => record.cycleId === selectedCycle?.id && record.date === selectedDate),
     dayType: dayTypeRecord?.dayType,
     baseline: dayTypeRecord?.baseline,
     userTarget: state.userTarget,
@@ -532,7 +548,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       if (dayType) {
         if (!selectedCycle) {
           selectedCycle = {
-            id: `cycle-${today}-${state.cycles.length + 1}`,
+            id: `cycle-${today}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             startDate: today,
             endDate: addCalendarDays(today, 89),
             status: "active",
@@ -542,7 +558,6 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         if (!cycleContains(selectedCycle, today)) {
           throw new Error("今天不在进行中的减脂周期内");
         }
-        state.profile.cycleStartDate = selectedCycle.startDate;
         const legacyRecord: DayTypeRecord = {
           cycleId: selectedCycle.id,
           date: today,
@@ -582,7 +597,7 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       }
 
       const cycle: FatLossCycle = {
-        id: `cycle-${input.startDate}-${state.cycles.length + 1}`,
+        id: `cycle-${input.startDate}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         startDate: input.startDate,
         endDate: addCalendarDays(input.startDate, 89),
         status: "active",
@@ -618,6 +633,44 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
         cycleId: cycle.id,
         date: cycleContains(cycle, today) ? today : cycle.startDate,
       });
+    },
+
+    async deleteArchivedCycle(cycleId, selection = {}) {
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const cycle = state.cycles.find((candidate) => candidate.id === cycleId);
+      if (!cycle) throw new Error("未找到所选减脂周期");
+      if (cycle.status !== "archived") throw new Error("只能删除已归档周期");
+      const mealIds = new Set(recordsForCycle(state.meals, cycle).map((record) => record.id));
+      const bodyIds = new Set(recordsForCycle(state.bodyRecords, cycle).map((record) => record.id));
+      const belongsToCycle = (record: { cycleId?: string; date: string }) =>
+        record.cycleId === cycleId || (!record.cycleId && cycleContains(cycle, record.date));
+      state.meals = state.meals.filter((record) => !belongsToCycle(record));
+      state.weights = state.weights.filter((record) => !belongsToCycle(record));
+      state.bodyRecords = state.bodyRecords.filter((record) => !belongsToCycle(record));
+      state.mealCorrections = state.mealCorrections.filter((record) => !mealIds.has(record.sourceMealId));
+      state.bodyCorrections = state.bodyCorrections.filter((record) => !bodyIds.has(record.sourceBodyId));
+      state.dayTypeRecords = state.dayTypeRecords.filter((record) => record.cycleId !== cycleId);
+      state.indulgenceDays = state.indulgenceDays.filter((record) => record.cycleId !== cycleId);
+      if (state.training) state.training.records = state.training.records.filter((record) => record.cycleId !== cycleId);
+      state.cycles = state.cycles.filter((record) => record.id !== cycleId);
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, selection.cycleId && selection.cycleId !== cycleId ? selection : {});
+    },
+
+    async setIndulgenceDay(input) {
+      assertLocalDate(input.date, "放纵日日期");
+      if (typeof input.enabled !== "boolean") throw new Error("请明确选择放纵日标记");
+      const today = dependencies.clock.today();
+      const state = await readState(dependencies.repository, today);
+      const cycle = state.cycles.find((candidate) => candidate.id === input.cycleId);
+      if (!cycle) throw new Error("未找到所选减脂周期");
+      if (cycle.status !== "active" || input.date < today) throw new Error("历史日期和已归档周期的放纵日标记只能查看");
+      if (!cycleContains(cycle, input.date)) throw new Error("所选日期不在该减脂周期内");
+      state.indulgenceDays = state.indulgenceDays.filter((record) => record.cycleId !== cycle.id || record.date !== input.date);
+      if (input.enabled) state.indulgenceDays.push({ cycleId: cycle.id, date: input.date });
+      await dependencies.repository.write(state);
+      return toSnapshot(state, today, { cycleId: cycle.id, date: input.date });
     },
 
     async setDayType(input) {
