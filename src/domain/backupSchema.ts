@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { DiaryState } from "./diary";
 import { addCalendarDays, assertLocalDate } from "./cycle";
+import { trainingBodyParts } from "./training";
 
 const text = z.string();
 const id = text.min(1);
@@ -23,8 +24,10 @@ const bodyCorrection = z.object({ ...correction, sourceBodyId: id, original: bod
 const profile = z.object({ nickname: id, sex: z.enum(["male", "female"]), age: number.int().min(18), heightCm: positive, currentWeightKg: positive, weeklyExercise: z.enum(["low", "medium", "high", "very-high"]), hasFatLossExperience: z.boolean(), targetWeightKg: positive.optional(), cycleStartDate: date.optional() }).strict();
 const cycle = z.object({ id, startDate: date, endDate: date, status: z.enum(["active", "archived"]), archivedAt: text.optional(), archiveReason: z.enum(["completed", "early"]).optional() }).strict();
 const group = z.object({ id, name: id, hidden: z.boolean(), ...metadata, deletedAt: timestamp.optional() }).strict();
-const trainingPlan = z.object({ id, ...metadata, title: id.max(100), content: id.max(2000), deletedAt: timestamp.optional() }).strict();
-const trainingRecord = z.object({ id, ...metadata, cycleId: id, date, planId: id.optional(), title: id.max(100), content: id.max(2000), completed: z.boolean(), feeling: text }).strict();
+const trainingFields = { title: id.max(100), content: id.max(2000), bodyParts: z.array(z.enum(trainingBodyParts)).refine((parts) => new Set(parts).size === parts.length).optional() };
+const trainingPlan = z.object({ id, ...metadata, ...trainingFields, deletedAt: timestamp.optional() }).strict();
+const trainingSchedule = z.object({ id, ...metadata, cycleId: id, date, planId: id.optional(), ...trainingFields }).strict();
+const trainingRecord = z.object({ id, ...metadata, cycleId: id, date, planId: id.optional(), scheduleId: id.optional(), ...trainingFields, completed: z.boolean(), feeling: text }).strict();
 const reminder = z.object({ enabled: z.boolean(), weekdays: z.array(number.int().min(1).max(7)), time: text }).strict().refine((value) => !value.enabled || (value.weekdays.length > 0 && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)));
 
 export const diaryStateSchema = z.object({
@@ -36,14 +39,14 @@ export const diaryStateSchema = z.object({
   foodLibrary: z.object({ customFoods: z.array(customFood), favoriteIds: z.array(id), recentIds: z.array(id) }).strict().optional(),
   mealGroups: z.array(group).optional(), mealCorrections: z.array(mealCorrection).optional(),
   bodyRecords: z.array(body).optional(), bodyCorrections: z.array(bodyCorrection).optional(),
-  training: z.object({ plans: z.array(trainingPlan), records: z.array(trainingRecord), reminder }).strict().optional(),
+  training: z.object({ plans: z.array(trainingPlan), records: z.array(trainingRecord), schedules: z.array(trainingSchedule).optional(), reminder }).strict().optional(),
 }).strict();
 
 export function validateBackupState(input: unknown): DiaryState {
   const parsed = diaryStateSchema.safeParse(input);
   if (!parsed.success) throw new Error(`备份数据不完整或字段无效：${parsed.error.issues[0].path.join(".") || "根对象"}`);
   const state = parsed.data as DiaryState;
-  for (const records of [state.cycles, state.meals, state.weights, state.bodyRecords, state.mealGroups, state.foodLibrary?.customFoods, state.training?.plans, state.training?.records, state.mealCorrections, state.bodyCorrections]) {
+  for (const records of [state.cycles, state.meals, state.weights, state.bodyRecords, state.mealGroups, state.foodLibrary?.customFoods, state.training?.plans, state.training?.records, state.training?.schedules, state.mealCorrections, state.bodyCorrections]) {
     if (records && new Set(records.map((record) => record.id)).size !== records.length) throw new Error("备份包含重复记录标识");
   }
   if ((state.cycles?.filter((value) => value.status === "active").length ?? 0) > 1) throw new Error("备份包含多个进行中的周期");
@@ -53,11 +56,18 @@ export function validateBackupState(input: unknown): DiaryState {
     if (cycle.endDate !== addCalendarDays(cycle.startDate, 89)) throw new Error("备份周期不是连续 90 个自然日");
   }
   if (state.cycles) {
-    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.training?.records ?? []), ...(state.dayTypeRecords ?? []), ...(state.indulgenceDays ?? [])]) {
+    for (const record of [...state.meals, ...state.weights, ...(state.bodyRecords ?? []), ...(state.training?.records ?? []), ...(state.training?.schedules ?? []), ...(state.dayTypeRecords ?? []), ...(state.indulgenceDays ?? [])]) {
       if (record.cycleId && !state.cycles.some((cycle) => cycle.id === record.cycleId && record.date >= cycle.startDate && record.date <= cycle.endDate)) throw new Error("备份记录的周期引用无效");
     }
   }
   if (state.indulgenceDays?.length && !state.cycles) throw new Error("备份放纵日缺少关联周期");
+  if (state.training?.schedules?.length && !state.cycles) throw new Error("备份训练排期缺少关联周期");
+  const scheduleIds = new Set<string>();
+  for (const record of state.training?.records ?? []) {
+    if (!record.scheduleId) continue;
+    if (scheduleIds.has(record.scheduleId) || !state.training?.schedules?.some((schedule) => schedule.id === record.scheduleId && schedule.cycleId === record.cycleId && schedule.date === record.date)) throw new Error("备份训练排期与实际记录关联无效");
+    scheduleIds.add(record.scheduleId);
+  }
   for (const [sources, corrections, sourceKey] of [[state.meals, state.mealCorrections ?? [], "sourceMealId"], [state.bodyRecords ?? [], state.bodyCorrections ?? [], "sourceBodyId"]] as const) {
     const seen = new Map<string, string>();
     const previousValues = new Map<string, unknown>();

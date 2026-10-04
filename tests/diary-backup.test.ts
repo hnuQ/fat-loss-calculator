@@ -57,7 +57,7 @@ describe("完整备份恢复公开旅程", () => {
     const target = createInMemoryDiaryRepository();
     await createDiaryBackup({ repository: target, randomBytes }).restoreBackup(content);
     expect(await target.read()).toEqual(before);
-    expect(JSON.parse(content)).toMatchObject({ version: 1, schemaVersion: 2, migration: "cycle-diary-v1", protection: "none" });
+    expect(JSON.parse(content)).toMatchObject({ version: 1, schemaVersion: 3, migration: "cycle-diary-v1", protection: "none" });
   });
   it("密码正确恢复；错误密码和篡改密文拒绝且保持原数据", async () => {
     const { repository, backup } = await fixture();
@@ -82,7 +82,7 @@ describe("完整备份恢复公开旅程", () => {
     await service.restoreBackup(rechecksum(file));
     const diary = createFatLossDiary({ repository: target, clock: { today: () => "2026-10-03" }, platform: { kind: "test", localPersistence: true, canvas: true } });
     expect((await diary.openDiary()).cycles).toHaveLength(1);
-    const current = await service.exportBackup(); expect(JSON.parse(current).schemaVersion).toBe(2);
+    const current = await service.exportBackup(); expect(JSON.parse(current).schemaVersion).toBe(3);
     const before = await target.read(); await service.restoreBackup(current); expect(await target.read()).toEqual(before);
   });
   it("损坏、不完整、版本未知、字段类型错误及断裂纠错链都不写入", async () => {

@@ -652,7 +652,10 @@ export function createFatLossDiary(dependencies: Dependencies): FatLossDiary {
       state.bodyCorrections = state.bodyCorrections.filter((record) => !bodyIds.has(record.sourceBodyId));
       state.dayTypeRecords = state.dayTypeRecords.filter((record) => record.cycleId !== cycleId);
       state.indulgenceDays = state.indulgenceDays.filter((record) => record.cycleId !== cycleId);
-      if (state.training) state.training.records = state.training.records.filter((record) => record.cycleId !== cycleId);
+      if (state.training) {
+        state.training.records = state.training.records.filter((record) => record.cycleId !== cycleId);
+        if (state.training.schedules) state.training.schedules = state.training.schedules.filter((record) => record.cycleId !== cycleId);
+      }
       state.cycles = state.cycles.filter((record) => record.id !== cycleId);
       await dependencies.repository.write(state);
       return toSnapshot(state, today, selection.cycleId && selection.cycleId !== cycleId ? selection : {});

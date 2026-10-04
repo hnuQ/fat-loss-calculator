@@ -7,6 +7,7 @@ import FoodLibrary from "../../components/FoodLibrary.vue";
 import MealDiary from "../../components/MealDiary.vue";
 import TrainingDiary from "../../components/TrainingDiary.vue";
 import BackupManager from "../../components/BackupManager.vue";
+import { trainingImage } from "../../application/trainingImages";
 import type {
   DiarySnapshot,
   FatLossCycle,
@@ -234,7 +235,7 @@ async function deleteCycle(cycle: FatLossCycle): Promise<void> {
     const confirmed = await new Promise<boolean>((resolve, reject) => {
       uni.showModal({
         title: "删除归档周期",
-        content: `${cycle.startDate} 至 ${cycle.endDate}。将同时删除该周期的日型、放纵日标记、餐食与纠错、身体与纠错及训练记录。`,
+        content: `${cycle.startDate} 至 ${cycle.endDate}。将同时删除该周期的日型、放纵日标记、餐食与纠错、身体与纠错、训练排期及记录。`,
         confirmText: "删除周期",
         cancelText: "取消",
         success: (result) => resolve(result.confirm),
@@ -515,6 +516,7 @@ onMounted(async () => {
           @click="toggleIndulgenceDay"
         >{{ snapshot.isIndulgenceDay ? '取消放纵日标记' : '标记放纵日' }}</button>
         <text v-else-if="snapshot.isIndulgenceDay" class="profile-meta">放纵日 · 标记只读</text>
+        <image v-if="snapshot.isIndulgenceDay" :src="trainingImage(snapshot.selectedDate, [], true)" mode="widthFix" style="display: block; width: 100%; max-width: 560rpx; margin: 20rpx auto; border-radius: 18rpx" aria-label="放纵日趣味图片" />
         <text v-if="snapshot.isIndulgenceDay" class="profile-meta">餐食可自愿记录；已记录摄入不代表全天总摄入，未记录不表示零摄入。</text>
       </view>
 

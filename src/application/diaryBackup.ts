@@ -10,7 +10,7 @@ import { systemClock } from "../infrastructure/systemClock";
 
 const iterations = 600000;
 const format = "fat-loss-diary-backup";
-const header = z.object({ format: z.literal(format), version: z.literal(1), schemaVersion: z.union([z.literal(1), z.literal(2)]), createdAt: z.string().refine((value) => Number.isFinite(Date.parse(value))), migration: z.literal("cycle-diary-v1") }).strict();
+const header = z.object({ format: z.literal(format), version: z.literal(1), schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]), createdAt: z.string().refine((value) => Number.isFinite(Date.parse(value))), migration: z.literal("cycle-diary-v1") }).strict();
 const plain = header.extend({ protection: z.literal("none"), state: z.unknown(), checksum: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const encrypted = header.extend({ protection: z.literal("aes-256-gcm"), kdf: z.literal("pbkdf2-sha256"), iterations: z.literal(iterations), salt: z.string().regex(/^[a-f0-9]{32}$/), nonce: z.string().regex(/^[a-f0-9]{24}$/), ciphertext: z.string().regex(/^(?:[a-f0-9]{2}){16,}$/) }).strict();
 const maxFileLength = 20 * 1024 * 1024;
@@ -37,7 +37,7 @@ export function createDiaryBackup(dependencies: { repository: DiaryRepository; r
   return {
     async exportBackup(password = ""): Promise<string> {
       const state = validateBackupState(await dependencies.repository.read() ?? { meals: [], weights: [] });
-      const metadata = { format, version: 1, schemaVersion: 2, createdAt: dependencies.now?.() ?? new Date().toISOString(), migration: "cycle-diary-v1" } as const;
+      const metadata = { format, version: 1, schemaVersion: 3, createdAt: dependencies.now?.() ?? new Date().toISOString(), migration: "cycle-diary-v1" } as const;
       if (!password) return JSON.stringify({ ...metadata, protection: "none", state, checksum: checksum(metadata, state) });
       if (password.length < 8) throw new Error("备份密码至少 8 个字符；请妥善保存，无法找回");
       const salt = await dependencies.randomBytes(16);
