@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readUtf8FileRoundtrip } from "./fileRoundtrip.js";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import { createDiaryBackup, decodeUtf8, encodeUtf8 } from "../src/application/diaryBackup";
@@ -122,12 +120,7 @@ describe("完整备份恢复公开旅程", () => {
     const { backup } = await fixture();
     for (const kind of ["body", "meals", "training"] as const) {
       const text = await backup.exportCsv(kind); expect(decodeUtf8(utf8ToBytes(text))).toBe(text);
-      const directory = mkdtempSync(join(tmpdir(), "diary-csv-"));
-      try {
-        const file = join(directory, `${kind}.csv`);
-        writeFileSync(file, encodeUtf8(text));
-        expect(readFileSync(file, "utf8")).toBe(text);
-      } finally { rmSync(directory, { recursive: true }); }
+      expect(readUtf8FileRoundtrip(encodeUtf8(text))).toBe(text);
       await expect(backup.restoreBackup(text)).rejects.toThrow("CSV");
     }
     expect(await backup.exportCsv("body")).toContain("测量录入错误");
