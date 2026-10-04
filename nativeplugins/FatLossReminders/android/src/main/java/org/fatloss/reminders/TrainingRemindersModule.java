@@ -3,8 +3,11 @@ package org.fatloss.reminders;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.provider.Settings;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import io.dcloud.common.core.permission.PermissionControler;
@@ -17,7 +20,27 @@ public final class TrainingRemindersModule extends UniModule {
     private UniJSCallback permissionCallback;
     private Context context() { return mUniSDKInstance.getContext(); }
     private void result(UniJSCallback callback, boolean granted) {
-        JSONObject result = new JSONObject(); result.put("ok", true); result.put("granted", granted); callback.invoke(result);
+        JSONObject result = new JSONObject(); result.put("ok", true); result.put("granted", granted);
+        result.put("exact", TrainingScheduler.exactPermitted(context()));
+        result.put("notifications", TrainingScheduler.permitted(context()));
+        result.put("sound", TrainingScheduler.soundPermitted(context())); callback.invoke(result);
+    }
+
+    @UniJSMethod(uiThread = true)
+    public void getStatus(UniJSCallback callback) {
+        try { result(callback, TrainingScheduler.permitted(context())); }
+        catch (Exception exception) { error(callback, "无法读取训练通知设置"); }
+    }
+
+    @UniJSMethod(uiThread = true)
+    public void requestExactPermission(UniJSCallback callback) {
+        try {
+            if (Build.VERSION.SDK_INT >= 31 && !TrainingScheduler.exactPermitted(context())) {
+                context().startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + context().getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            // Settings has no permission result callback. Refresh and reconcile on app resume.
+            result(callback, TrainingScheduler.exactPermitted(context()));
+        } catch (Exception exception) { error(callback, "无法打开准时提醒设置，请在系统设置中允许；普通通知无法保证准时"); }
     }
     private void error(UniJSCallback callback, String message) {
         JSONObject result = new JSONObject(); result.put("ok", false); result.put("error", message); callback.invoke(result);

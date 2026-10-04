@@ -35,9 +35,20 @@ public final class TrainingScheduler {
         return Build.VERSION.SDK_INT < 26 || manager(context).getNotificationChannel(CHANNEL).getImportance() != NotificationManager.IMPORTANCE_NONE;
     }
 
-    private static PendingIntent alarmIntent(Context context, int weekday, int generation) {
+    static boolean exactPermitted(Context context) {
+        return Build.VERSION.SDK_INT < 31 || ((AlarmManager) context.getSystemService(Context.ALARM_SERVICE)).canScheduleExactAlarms();
+    }
+
+    static boolean soundPermitted(Context context) {
+        createChannel(context);
+        if (Build.VERSION.SDK_INT < 26) return true;
+        NotificationChannel channel = manager(context).getNotificationChannel(CHANNEL);
+        return channel.getImportance() >= NotificationManager.IMPORTANCE_DEFAULT && channel.getSound() != null;
+    }
+
+    private static PendingIntent alarmIntent(Context context, int weekday, int generation, long occurrence) {
         Intent intent = new Intent(context, TrainingAlarmReceiver.class).setAction(ACTION);
-        intent.putExtra("weekday", weekday).putExtra("generation", generation);
+        intent.putExtra("weekday", weekday).putExtra("generation", generation).putExtra("occurrence", occurrence);
         return PendingIntent.getBroadcast(context, BASE_ID + weekday, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
@@ -55,7 +66,7 @@ public final class TrainingScheduler {
     private static void cancelAll(Context context) {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         for (int day = 1; day <= 7; day++) {
-            PendingIntent pending = alarmIntent(context, day, 0);
+            PendingIntent pending = alarmIntent(context, day, 0, 0);
             alarms.cancel(pending); pending.cancel();
             manager(context).cancel(BASE_ID + day);
         }
@@ -64,8 +75,12 @@ public final class TrainingScheduler {
     private static void schedule(Context context, int day, SharedPreferences state) {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         long when = nextOccurrence(day, state.getInt("hour", 0), state.getInt("minute", 0), System.currentTimeMillis());
-        // Inexact idle-capable reminders do not request the special exact-alarm permission.
-        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, alarmIntent(context, day, state.getInt("generation", 0)));
+        PendingIntent pending = alarmIntent(context, day, state.getInt("generation", 0), when);
+        if (exactPermitted(context)) {
+            try { alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pending); return; }
+            catch (SecurityException revoked) { /* Permission may change between checking and scheduling. */ }
+        }
+        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pending);
     }
 
     static synchronized void replace(Context context, boolean enabled, int mask, int hour, int minute) {
@@ -89,13 +104,17 @@ public final class TrainingScheduler {
     static synchronized void deliver(Context context, Intent intent) {
         SharedPreferences state = prefs(context);
         int day = intent.getIntExtra("weekday", 0);
+        long occurrence = intent.getLongExtra("occurrence", 0);
         if (day < 1 || day > 7 || !state.getBoolean("enabled", false) || intent.getIntExtra("generation", -1) != state.getInt("generation", 0) || (state.getInt("mask", 0) & (1 << (day - 1))) == 0) return;
+        if (occurrence <= 0 || System.currentTimeMillis() < occurrence || state.getLong("delivered-" + day, 0) >= occurrence) return;
         // Re-arm before notifying, so revoking permission never produces a stale notification.
         schedule(context, day, state);
         if (!permitted(context)) return;
+        if (!state.edit().putLong("delivered-" + day, occurrence).commit()) throw new IllegalStateException("保存训练通知状态失败");
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         Notification.Builder notification = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(context, CHANNEL) : new Notification.Builder(context);
         notification.setSmallIcon(context.getApplicationInfo().icon).setContentTitle("训练提醒").setContentText("到了你设置的训练时间，可查看自己的训练计划。").setAutoCancel(true);
+        if (Build.VERSION.SDK_INT < 26) notification.setDefaults(Notification.DEFAULT_SOUND);
         if (launch != null) notification.setContentIntent(PendingIntent.getActivity(context, BASE_ID, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         manager(context).notify(BASE_ID + day, notification.build());
     }

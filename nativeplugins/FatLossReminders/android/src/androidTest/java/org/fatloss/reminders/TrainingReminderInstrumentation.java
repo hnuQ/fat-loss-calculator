@@ -11,7 +11,8 @@ import java.util.Calendar;
 /** Runs the production scheduler/receiver against the device OS, in an isolated test package. */
 public final class TrainingReminderInstrumentation extends Instrumentation {
     private String scenario;
-    @Override public void onCreate(Bundle arguments) { scenario = arguments.getString("scenario", "arrange"); start(); }
+    private int leadMinutes;
+    @Override public void onCreate(Bundle arguments) { scenario = arguments.getString("scenario", "arrange"); leadMinutes = Integer.parseInt(arguments.getString("leadMinutes", "2")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
@@ -19,6 +20,19 @@ public final class TrainingReminderInstrumentation extends Instrumentation {
             Context context = getTargetContext();
             NotificationManager notifications = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             switch (scenario) {
+                case "natural": {
+                    Calendar due = Calendar.getInstance(); due.add(Calendar.MINUTE, leadMinutes);
+                    int weekday = due.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY ? 7 : due.get(Calendar.DAY_OF_WEEK) - 1;
+                    TrainingScheduler.replace(context, true, 1 << (weekday - 1), due.get(Calendar.HOUR_OF_DAY), due.get(Calendar.MINUTE));
+                    due.set(Calendar.SECOND, 0); due.set(Calendar.MILLISECOND, 0);
+                    result.putLong("expectedAt", due.getTimeInMillis());
+                    break;
+                }
+                case "status":
+                    result.putBoolean("exact", TrainingScheduler.exactPermitted(context));
+                    result.putBoolean("notifications", TrainingScheduler.permitted(context));
+                    result.putBoolean("sound", TrainingScheduler.soundPermitted(context));
+                    break;
                 case "arrange":
                     TrainingScheduler.replace(context, true, 5, 18, 30);
                     break;
@@ -30,7 +44,7 @@ public final class TrainingReminderInstrumentation extends Instrumentation {
                     break;
                 case "deliver": {
                     int generation = context.getSharedPreferences("fat-loss-training-reminders-v1", Context.MODE_PRIVATE).getInt("generation", 0);
-                    context.sendBroadcast(new Intent(context, TrainingAlarmReceiver.class).setAction(TrainingScheduler.ACTION).putExtra("weekday", 5).putExtra("generation", generation));
+                    context.sendBroadcast(new Intent(context, TrainingAlarmReceiver.class).setAction(TrainingScheduler.ACTION).putExtra("weekday", 5).putExtra("generation", generation).putExtra("occurrence", System.currentTimeMillis()));
                     boolean delivered = false;
                     for (int attempt = 0; attempt < 30; attempt++) {
                         if (notifications.getActiveNotifications().length == 1) { delivered = true; break; }

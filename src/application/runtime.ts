@@ -18,4 +18,5 @@ export const fatLossDiary = createFatLossDiary({
   platform: uniPlatformCapabilities,
 });
 
-export const trainingDiary = createTrainingDiary({ repository, clock: systemClock, diary: fatLossDiary, reminders: createUniTrainingReminders() });
+export const trainingReminders = createUniTrainingReminders();
+export const trainingDiary = createTrainingDiary({ repository, clock: systemClock, diary: fatLossDiary, reminders: trainingReminders });

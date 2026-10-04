@@ -32,6 +32,16 @@ async function setup() {
 const fields = { title: "自填训练", content: "自己选择的训练内容", completed: false, feeling: "" };
 
 describe("训练计划、当天记录和提醒公开旅程", () => {
+  it("数字时间接受午夜和末分钟，拒绝超范围、空白和非数字", async () => {
+    const { training } = await setup();
+    for (const time of ["00:00", "23:59"]) {
+      await training.saveReminder({ enabled: true, weekdays: [7], time });
+      expect((await training.open()).reminder.time).toBe(time);
+    }
+    for (const time of ["24:00", "23:60", "-1:00", "aa:00", " :00", "1.5:00", "1:00"]) {
+      await expect(training.saveReminder({ enabled: true, weekdays: [7], time })).rejects.toThrow("00:00–23:59");
+    }
+  });
   it("旧状态打开不生成计划、记录或通知；默认关闭", async () => {
     const { training, repository, calls, requests } = await setup();
     const before = await repository.read();

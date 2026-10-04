@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { trainingDiary } from "../application/runtime";
 import type { DiarySnapshot } from "../domain/diary";
 import { trainingState, type TrainingBodyPart, type TrainingPlan, type TrainingRecord, type TrainingSchedule, type TrainingState, type TrainingWeek } from "../domain/training";
@@ -10,7 +10,7 @@ import TrainingParts from "./TrainingParts.vue";
 const props = defineProps<{ snapshot: DiarySnapshot; canEdit: boolean; disabled: boolean }>();
 const emit = defineEmits<{ (event: "change", snapshot: DiarySnapshot): void; (event: "working", value: boolean): void }>();
 const state = ref<TrainingState>(trainingState());
-const capability = trainingDiary.capability();
+const capability = ref(trainingDiary.capability());
 const plans = computed(() => state.value.plans.filter((plan) => !plan.deletedAt));
 const message = ref("");
 const busy = ref(false);
@@ -26,7 +26,18 @@ const weekDate = ref(props.snapshot.selectedDate);
 const selectedPlan = computed(() => recordForm.planId ? plans.value.findIndex((plan) => plan.id === recordForm.planId) + 1 : 0);
 const planOptions = computed(() => ["独立填写临时内容", ...plans.value.map((plan) => plan.title)]);
 const scheduleEditable = computed(() => props.snapshot.selectedCycle?.status === "active" && scheduleForm.date >= props.snapshot.today && scheduleForm.date >= props.snapshot.selectedCycle.startDate && scheduleForm.date <= props.snapshot.selectedCycle.endDate);
-const reminderForm = reactive({ enabled: false, weekdays: [] as number[], time: "" });
+const reminderForm = reactive({ enabled: false, weekdays: [] as number[], hour: "", minute: "" });
+function loadReminder() {
+  const reminder = state.value.reminder;
+  Object.assign(reminderForm, { enabled: reminder.enabled, weekdays: [...reminder.weekdays], hour: reminder.time.split(":")[0] || "", minute: reminder.time.split(":")[1] || "" });
+  capability.value = trainingDiary.capability();
+}
+async function refreshReminderCapability() {
+  try { const opened = await trainingDiary.open(); capability.value = trainingDiary.capability(); if (opened.warning) message.value = opened.warning; }
+  catch (error) { message.value = error instanceof Error ? error.message : "无法读取训练提醒设置"; }
+}
+onMounted(() => uni.onAppShow(refreshReminderCapability));
+onUnmounted(() => uni.offAppShow(refreshReminderCapability));
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
 function resetRecord() {
   editingRecord.value = undefined; deletingRecord.value = undefined;
@@ -71,9 +82,14 @@ async function savePlan() { await run(async () => { state.value = await training
 async function deletePlan(id: string) { await run(async () => { state.value = await trainingDiary.deletePlan(id); resetPlan(); message.value = "训练计划已删除，已保存的训练记录保留"; }); }
 async function saveRecord() { await run(async () => { emit("change", await trainingDiary.saveRecord({ ...recordForm, id: editingRecord.value, date: props.snapshot.selectedDate })); state.value = await trainingDiary.open(); await loadWeek(); resetRecord(); message.value = "当天训练记录已保存"; }); }
 async function deleteRecord(id: string) { await run(async () => { emit("change", await trainingDiary.deleteRecord(id)); await loadWeek(); resetRecord(); message.value = "当天训练记录已删除"; }); }
-async function saveReminder() { await run(async () => { state.value = await trainingDiary.saveReminder({ ...reminderForm }); Object.assign(reminderForm, state.value.reminder); message.value = reminderForm.enabled ? "每周训练提醒已安排" : "训练提醒已关闭，系统安排已取消"; }); }
+async function saveReminder() { await run(async () => {
+  if (reminderForm.enabled && (!/^\d{1,2}$/.test(reminderForm.hour) || !/^\d{1,2}$/.test(reminderForm.minute))) throw new Error("请填写数字时间：00:00–23:59（时 00–23，分 00–59）");
+  state.value = await trainingDiary.saveReminder({ enabled: reminderForm.enabled, weekdays: reminderForm.weekdays, time: `${reminderForm.hour.padStart(2, "0")}:${reminderForm.minute.padStart(2, "0")}` });
+  loadReminder(); message.value = reminderForm.enabled ? "训练提醒设置已保存" : "训练提醒已关闭";
+}); }
+async function requestExactPermission() { await run(async () => { await trainingDiary.requestExactPermission(); capability.value = trainingDiary.capability(); }); }
 onMounted(async () => {
-  await run(async () => { const opened = await trainingDiary.open(); state.value = opened; Object.assign(reminderForm, opened.reminder); await loadWeek(); message.value = opened.warning; });
+  await run(async () => { const opened = await trainingDiary.open(); state.value = opened; loadReminder(); await loadWeek(); message.value = opened.warning; });
 });
 </script>
 
@@ -190,7 +206,13 @@ onMounted(async () => {
         <view class="weekday-row">
           <button role="button" v-for="(label, index) in weekdays" :key="label" :aria-label="`提醒星期${label}`" :class="{ selected: reminderForm.weekdays.includes(index + 1) }" :disabled="busy || disabled" @click="toggleWeekday(index + 1)">周{{ label }}</button>
         </view>
-        <picker mode="time" :value="reminderForm.time" :disabled="busy || disabled" @change="reminderForm.time = String($event.detail.value)"><view class="time-value">提醒时间：{{ reminderForm.time || '请选择' }}</view></picker>
+        <view class="reminder-time">
+          <label>时<input v-model="reminderForm.hour" type="number" maxlength="2" aria-label="提醒小时" placeholder="00–23" :disabled="busy || disabled" /></label>
+          <text>:</text>
+          <label>分<input v-model="reminderForm.minute" type="number" maxlength="2" aria-label="提醒分钟" placeholder="00–59" :disabled="busy || disabled" /></label>
+        </view>
+        <text class="meta">提醒时间范围：00:00–23:59</text>
+        <button v-if="capability.exactPermissionNeeded" role="button" :disabled="busy || disabled" @click="requestExactPermission">允许准时提醒</button>
       </view>
       <button role="button" v-if="capability.supported || state.reminder.enabled" class="primary" :disabled="busy || disabled" @click="saveReminder">保存训练提醒设置</button>
       <text class="meta">{{ state.reminder.enabled ? `已保存：每周${state.reminder.weekdays.map((day) => weekdays[day - 1]).join('、')} ${state.reminder.time}` : '训练提醒已关闭' }}</text>
@@ -214,6 +236,8 @@ button { margin: 0; font-size: 24rpx; color: #315e47; background: #f7faf8; }
 .content { display: block; margin-top: 12rpx; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 26rpx; line-height: 1.6; }
 .notice { display: block; padding: 20rpx; margin-bottom: 24rpx; background: #e5f2ea; border-radius: 18rpx; }
 .time-value { padding: 24rpx 0; font-size: 28rpx; }
+.reminder-time { display: flex; align-items: center; gap: 16rpx; }
+.reminder-time label { width: 180rpx; }
 .calendar { display: flex; flex-direction: column; gap: 16rpx; margin: 24rpx 0; }
 .calendar-day { border: 1rpx solid #e0e7e2; border-radius: 18rpx; padding: 16rpx; }
 .outside { opacity: 0.55; }

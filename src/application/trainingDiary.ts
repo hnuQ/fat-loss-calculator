@@ -31,6 +31,7 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
   }
   return {
     capability: () => reminders.capability(),
+    requestExactPermission: async () => { await reminders.requestExactPermission?.(); },
     openWeek: (selection: { cycleId: string; date: string }): Promise<TrainingWeek> => run(async () => {
       assertLocalDate(selection.date);
       const state = await read();
@@ -84,9 +85,10 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
       // Also reconcile a saved OFF setting after interruption before native cancellation.
       // An untouched old state must never create or even request notification tasks.
       if (stored?.training) {
-        try { await reminders.replace(state.reminder); }
+        try { await reminders.refreshCapability?.(); await reminders.replace(state.reminder); }
         catch (error) { warning = error instanceof Error ? error.message : "训练提醒同步失败，请重新保存提醒设置"; }
       }
+      else await reminders.refreshCapability?.();
       return { ...state, warning };
     }),
     savePlan: (input: { id?: string; title: string; content: string; bodyParts?: TrainingBodyPart[] }) => run(async () => {

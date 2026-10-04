@@ -58,7 +58,10 @@ export interface TrainingState {
 }
 
 export interface TrainingReminderAdapter {
-  capability(): { supported: boolean; message: string };
+  capability(): { supported: boolean; message: string; exactPermissionNeeded?: boolean };
+  refreshCapability?(): Promise<void>;
+  requestExactPermission?(): Promise<void>;
+  setForeground?(visible: boolean): void;
   /** Requests notification permission only in response to explicit opt-in. */
   requestPermission(): Promise<boolean>;
   /** Replaces this app's entire schedule with stable weekday IDs, including cancellation. */
@@ -80,6 +83,6 @@ export function validateReminder(input: TrainingReminder): TrainingReminder {
   if (typeof input.enabled !== "boolean") throw new Error("请选择是否启用训练提醒");
   if (!input.enabled) return { enabled: false, weekdays: [], time: "" };
   if (!Array.isArray(input.weekdays) || !input.weekdays.length || input.weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) throw new Error("请选择有效的训练星期");
-  if (typeof input.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time)) throw new Error("请选择有效的提醒时间（HH:mm）");
+  if (typeof input.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time)) throw new Error("提醒时间须为 00:00–23:59（时 00–23，分 00–59）");
   return { enabled: true, weekdays: [...new Set(input.weekdays)].sort((a, b) => a - b), time: input.time };
 }
