@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import { createDiaryBackup, decodeUtf8, encodeUtf8 } from "../src/application/diaryBackup";
@@ -18,13 +21,16 @@ async function fixture() {
   await diary.establishProfile({ ...profile, userTarget: { carbohydrateGrams: 100, proteinGrams: 100, fatGrams: 50 } });
   await diary.saveMeal({ mealSlot: "breakfast", foodId: diary.searchFoods("燕麦")[0].id, amount: 100 });
   await diary.saveBodyRecord({ measurements: { weightKg: 65, waistCm: 80 } });
+  const cycleId = (await diary.openDiary()).activeCycle!.id;
+  await diary.setIndulgenceDay({ cycleId, date: today, enabled: true });
   const foods = createFoodLibrary({ repository, now: clock.now });
   const custom = await foods.saveCustomFood({ name: "测试自定义食材", basis: "per100g", carbohydrateGrams: 20, proteinGrams: 10, fatGrams: 5 });
   await foods.toggleFavorite(custom.id);
   await diary.saveMeal({ mealSlot: "lunch", foodId: custom.id, amount: 100 });
   await foods.deleteCustomFood(custom.id);
-  const plan = (await training.savePlan({ title: "自填训练", content: '内容,含"引号"\n第二行' })).plans[0];
-  await training.saveRecord({ planId: plan.id, title: plan.title, content: plan.content, completed: true, feeling: "=SUM(1,2)" });
+  const plan = (await training.savePlan({ title: "自填训练", content: '内容,含"引号"\n第二行', bodyParts: ["胸", "肩"] })).plans[0];
+  const schedule = await training.saveSchedule({ cycleId, date: today, planId: plan.id, title: plan.title, content: plan.content, bodyParts: plan.bodyParts });
+  await training.saveRecord({ scheduleId: schedule.id, planId: plan.id, title: plan.title, content: plan.content, bodyParts: ["背", "手臂"], completed: true, feeling: "=SUM(1,2)" });
   await training.deletePlan(plan.id);
   await training.saveReminder({ enabled: true, weekdays: [1, 3], time: "18:30" });
   today = "2026-10-03";
@@ -34,6 +40,7 @@ async function fixture() {
   await diary.correctBodyRecord({ id: state.bodyRecords![0].id, measurements: { weightKg: 64.5, waistCm: 79 }, reason: "测量录入错误" });
   await diary.archiveActiveCycle();
   await diary.startCycle({ startDate: today, dayType: "rest" });
+  await diary.setIndulgenceDay({ cycleId: (await diary.openDiary()).activeCycle!.id, date: today, enabled: true });
   await diary.addMealGroup("自定义餐次");
   return { repository, diary, clock, backup: createDiaryBackup({ repository, randomBytes, now: clock.now }) };
 }
@@ -57,6 +64,13 @@ describe("完整备份恢复公开旅程", () => {
     const target = createInMemoryDiaryRepository();
     await createDiaryBackup({ repository: target, randomBytes }).restoreBackup(content);
     expect(await target.read()).toEqual(before);
+    const reopened = createFatLossDiary({ repository: target, clock: { today: () => "2026-10-03" }, platform: { kind: "test", localPersistence: true, canvas: true } });
+    const snapshot = await reopened.openDiary();
+    expect(snapshot.isIndulgenceDay).toBe(true);
+    expect(snapshot.meals).toEqual([]);
+    expect(snapshot.remaining).toBeUndefined();
+    expect(before!.training!.schedules![0].bodyParts).toEqual(["胸", "肩"]);
+    expect(before!.training!.records[0]).toMatchObject({ completed: true, bodyParts: ["背", "手臂"] });
     expect(JSON.parse(content)).toMatchObject({ version: 1, schemaVersion: 4, migration: "cycle-diary-v1", protection: "none" });
   });
   it("密码正确恢复；错误密码和篡改密文拒绝且保持原数据", async () => {
@@ -108,11 +122,24 @@ describe("完整备份恢复公开旅程", () => {
     const { backup } = await fixture();
     for (const kind of ["body", "meals", "training"] as const) {
       const text = await backup.exportCsv(kind); expect(decodeUtf8(utf8ToBytes(text))).toBe(text);
+      const directory = mkdtempSync(join(tmpdir(), "diary-csv-"));
+      try {
+        const file = join(directory, `${kind}.csv`);
+        writeFileSync(file, encodeUtf8(text));
+        expect(readFileSync(file, "utf8")).toBe(text);
+      } finally { rmSync(directory, { recursive: true }); }
       await expect(backup.restoreBackup(text)).rejects.toThrow("CSV");
     }
     expect(await backup.exportCsv("body")).toContain("测量录入错误");
     expect(await backup.exportCsv("meals")).toContain("再次核实数量");
     expect(await backup.exportCsv("training")).toContain('内容,含""引号""\n第二行');
     expect(await backup.exportCsv("training")).toContain("'=SUM(1,2)");
+    const meals = decodeUtf8(encodeUtf8(await backup.exportCsv("meals")));
+    const emptyDay = meals.split("\r\n").find((row) => row.includes('"2026-10-03","日期标记"'));
+    expect(emptyDay).toBeDefined();
+    expect(emptyDay).not.toContain('"0"');
+    expect(await backup.exportCsv("training")).toContain("背、手臂");
+    expect(await backup.exportCsv("training")).toContain('"排期ID"');
+    expect(await backup.exportCsv("training")).toContain(JSON.parse(await backup.exportBackup()).state.training.schedules[0].id);
   });
 });

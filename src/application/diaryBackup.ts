@@ -93,7 +93,7 @@ function csv(rows: unknown[][]): string {
 }
 
 export function exportDiaryCsv(state: DiaryState, kind: "body" | "meals" | "training"): string {
-  if (kind === "training") return csv([["记录ID", "周期ID", "日期", "计划ID", "训练名称", "训练内容", "完成", "感受"], ...(state.training?.records ?? []).map((record) => [record.id, record.cycleId, record.date, record.planId, record.title, record.content, record.completed ? "是" : "否", record.feeling])]);
+  if (kind === "training") return csv([["记录ID", "周期ID", "日期", "计划ID", "训练名称", "训练内容", "完成", "感受", "训练部位", "排期ID"], ...(state.training?.records ?? []).map((record) => [record.id, record.cycleId, record.date, record.planId, record.title, record.content, record.completed ? "是" : "否", record.feeling, record.bodyParts?.join("、"), record.scheduleId])]);
   if (kind === "body") {
     const records = state.bodyRecords ? effectiveBodyRecords(state) : state.weights;
     return csv([["记录ID", "周期ID", "日期", "版本", "纠错ID", "原因", "纠错时间", "体重kg", "体脂率%", "腰围cm", "胸围cm", "臀围cm", "大腿围cm"], ...records.map((record) => [record.id, record.cycleId, record.date, "有效", "", "", "", ...["weightKg", "bodyFatPercent", "waistCm", "chestCm", "hipCm", "thighCm"].map((key) => (record as unknown as Record<string, unknown>)[key])]), ...(state.bodyCorrections ?? []).map((item) => [item.sourceBodyId, item.corrected.cycleId, item.corrected.date, "历史审计（非当前值）", item.id, item.reason, item.createdAt, item.corrected.weightKg, item.corrected.bodyFatPercent, item.corrected.waistCm, item.corrected.chestCm, item.corrected.hipCm, item.corrected.thighCm])]);

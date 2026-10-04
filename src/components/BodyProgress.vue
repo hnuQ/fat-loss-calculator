@@ -106,7 +106,7 @@ async function remove(id: string) {
     <text v-if="message" role="status" class="notice">{{ message }}</text>
     <view class="card">
       <text class="title">身体历史记录</text>
-      <text class="meta">本周期记录可直接编辑和删除，无需纠错原因；图表及摘要显示当前有效值，旧纠错仅保留为历史审计。</text>
+      <text class="meta">本周期记录可直接编辑和删除，无需填写原因；图表及摘要随记录更新。</text>
       <text v-if="!records.length" class="meta">本周期暂无身体记录</text>
       <view v-for="record in records" :key="record.id" class="history-entry">
         <text class="entry-title">{{ record.date }}</text>

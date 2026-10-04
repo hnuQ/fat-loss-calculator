@@ -571,10 +571,6 @@ onMounted(async () => {
       <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
       <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
-      <view class="platform-note">
-        <text>运行平台：{{ platform.kind }}</text>
-        <text>本地持久化 {{ platform.localPersistence ? '可用' : '不可用' }} · 趋势图 {{ platform.canvas ? '可用' : '不可用' }}</text>
-      </view>
     </template>
   </view>
 </template>
@@ -616,7 +612,6 @@ page {
 .subtitle,
 .food-meta,
 .empty-copy,
-.platform-note,
 .onboarding-copy,
 .profile-meta,
 .macro-meta {
@@ -935,10 +930,4 @@ page {
   font-size: 24rpx;
 }
 
-.platform-note {
-  display: flex;
-  flex-direction: column;
-  gap: 8rpx;
-  padding: 12rpx 8rpx;
-}
 </style>

@@ -89,8 +89,7 @@ async function correct(meal: MealRecord) {
     <view class="heading"><text class="title">六餐日记</text><button role="button" @click="toggleConfig">{{ showConfig ? '收起餐次设置' : '餐次设置' }}</button></view>
     <text v-if="message" role="status" class="notice">{{ message }}</text>
     <text v-if="!canEdit" class="meta">餐食只能在当天新增、编辑和删除；结束日期可按规则追加历史纠错。</text>
-    <text class="meta">本地日期锁只增加修改阻力，不具备防篡改安全性。每次操作按设备本地日期判断。</text>
-    <text v-if="snapshot.selectedDate < snapshot.today" class="meta">汇总采用每条来源最新追加的有效修正。纠错与提交前的有效当日总热量比较，绝对变化须超过 10%，正好 10% 拒绝；按已保存的 0.1 kcal 精度比较。零热量日须产生非零热量变化。食用量仍须大于 0。</text>
+    <text v-if="snapshot.selectedDate < snapshot.today" class="meta">历史纠错需填写原因，且当日总热量变化须超过 10%；原始记录会保留。</text>
     <view v-if="showConfig" class="config card">
       <view v-for="group in snapshot.mealGroups" :key="group.id" class="config-row">
         <input v-model="names[group.id]" :aria-label="`${group.name}餐次名称`" maxlength="30" />
