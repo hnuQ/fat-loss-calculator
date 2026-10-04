@@ -35,7 +35,34 @@ const experienceOptions: Array<{ label: string; value: boolean }> = [
   { label: "无减脂基础", value: false },
 ];
 const snapshot = ref<DiarySnapshot>();
-const page = ref<"today" | "training" | "progress" | "profile">("today");
+type DiaryPage = "today" | "food" | "training" | "progress" | "profile";
+const page = ref<DiaryPage>("today");
+const tabs: Array<{ value: DiaryPage; label: string }> = [
+  { value: "today", label: "首页" }, { value: "food", label: "饮食" },
+  { value: "training", label: "训练" }, { value: "progress", label: "进度" },
+  { value: "profile", label: "我的" },
+];
+const savedMealRevision = ref(0);
+const focusMeal = ref(false);
+function switchPage(value: DiaryPage) {
+  if (busy.value) return;
+  focusMeal.value = false;
+  page.value = value;
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 });
+}
+function openFoodGroup(id: string) {
+  if (busy.value) return;
+  selectedGroup.value = id;
+  switchPage("food");
+}
+function viewMeal() {
+  switchPage("today");
+  focusMeal.value = true;
+}
+async function chooseCycle(event: { detail: { value: string | number } }) {
+  const cycle = snapshot.value?.cycles[Number(event.detail.value)];
+  if (cycle) await viewCycle(cycle);
+}
 const busy = ref(false);
 const message = ref("");
 const selectedGroup = ref("breakfast");
@@ -138,6 +165,7 @@ async function establishProfile(): Promise<void> {
       userTarget: buildUserTarget(),
     });
     cycleForm.startDate = snapshot.value.today;
+    page.value = "profile";
     message.value = "健康档案已保存，请创建减脂周期";
   } catch (error) {
     message.value = error instanceof Error ? error.message : "建档失败";
@@ -172,10 +200,14 @@ async function startCycle(): Promise<void> {
 }
 
 async function openDate(date: string, cycleId?: string): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
   try {
     snapshot.value = await fatLossDiary.openDiary({ date, cycleId });
   } catch (error) {
     message.value = error instanceof Error ? error.message : "切换日期失败";
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -225,6 +257,7 @@ async function viewCycle(cycle: FatLossCycle): Promise<void> {
       ? today
       : cycle.startDate;
   await openDate(date, cycle.id);
+  if (page.value === "profile" && snapshot.value?.selectedCycle?.id === cycle.id) switchPage("today");
 }
 
 async function deleteCycle(cycle: FatLossCycle): Promise<void> {
@@ -284,6 +317,7 @@ async function addFood(food: Food, amount: number): Promise<void> {
       amount,
       date: snapshot.value?.selectedDate,
     });
+    savedMealRevision.value += 1;
     message.value = `${food.name} 已保存到${visibleGroups.value.find((group) => group.id === selectedGroup.value)?.name}`;
   } catch (error) {
     message.value = error instanceof Error ? error.message : "保存餐食失败";
@@ -305,7 +339,7 @@ onMounted(async () => {
   <view class="page-shell">
     <view class="hero">
       <text class="eyebrow">90 天减脂记录</text>
-      <text class="title">{{ page === 'profile' ? '我的' : page === 'progress' ? '进度' : page === 'training' ? '训练' : heroTitle }}</text>
+      <text class="title">{{ page === 'profile' ? '我的' : page === 'progress' ? '进度' : page === 'training' ? '训练' : page === 'food' ? '饮食' : heroTitle }}</text>
       <text class="subtitle">只记录计算结果、实际摄入和真实体重</text>
     </view>
 
@@ -393,16 +427,29 @@ onMounted(async () => {
     </view>
 
     <template v-else>
-      <view class="page-tabs">
-        <button role="button" :class="{ selected: page === 'today' }" @click="page = 'today'">今天</button>
-        <button role="button" :class="{ selected: page === 'training' }" @click="page = 'training'">训练</button>
-        <button role="button" :class="{ selected: page === 'progress' }" @click="page = 'progress'">进度</button>
-        <button role="button" :class="{ selected: page === 'profile' }" @click="page = 'profile'">我的</button>
+      <view v-if="(page === 'today' || page === 'progress') && snapshot.cycles.length" class="card context-card">
+        <text class="section-title">选择减脂周期</text>
+        <picker :range="snapshot.cycles.map((cycle) => cycle.startDate + ' 至 ' + cycle.endDate + (cycle.status === 'active' ? ' · 进行中' : ' · 已归档'))" :value="snapshot.cycles.findIndex((cycle) => cycle.id === snapshot?.selectedCycle?.id)" :disabled="busy" @change="chooseCycle">
+          <view class="picker-value">{{ snapshot.selectedCycle ? snapshot.selectedCycle.startDate + ' 至 ' + snapshot.selectedCycle.endDate : '请选择周期' }}</view>
+        </picker>
       </view>
+      <view v-if="page === 'food' || page === 'training'" class="card context-card">
+        <text class="section-title">{{ snapshot.selectedCycle ? (snapshot.selectedCycle.status === 'archived' ? '已归档周期' : '进行中周期') : '未选择周期' }} · {{ snapshot.selectedDate }}</text>
+        <text class="profile-meta">{{ snapshot.selectedCycle ? snapshot.selectedCycle.startDate + ' 至 ' + snapshot.selectedCycle.endDate : '尚未创建周期' }}</text>
+        <button :disabled="busy" class="calendar-button" @click="switchPage('today')">切换日期与周期</button>
+      </view>
+      <view v-if="page !== 'profile' && !snapshot.selectedCycle" class="card">
+        <text class="card-title">尚未选择减脂周期</text>
+        <text class="empty-copy">在“我的”创建周期，或在首页选择已有周期。</text>
+        <button :disabled="busy" @click="switchPage('profile')">管理周期</button>
+      </view>
+      <template v-if="page === 'profile'">
       <view class="card profile-card">
         <view>
           <text class="card-title">{{ snapshot.profile.nickname }}的健康档案</text>
           <text class="profile-meta">年龄 {{ snapshot.profile.age }} 岁 · 身高 {{ snapshot.profile.heightCm }} cm · 当前体重 {{ snapshot.profile.currentWeightKg }} kg</text>
+          <text class="profile-meta">性别 {{ sexOptions.find((item) => item.value === snapshot?.profile?.sex)?.label }} · 每周运动 {{ exerciseOptions.find((item) => item.value === snapshot?.profile?.weeklyExercise)?.label }}</text>
+          <text class="profile-meta">{{ snapshot.profile.hasFatLossExperience ? '有减脂基础' : '无减脂基础' }} · 目标体重 {{ snapshot.profile.targetWeightKg ? snapshot.profile.targetWeightKg + ' kg' : '未设置' }}</text>
         </view>
         <view class="bmi-value">
           <text>BMI</text>
@@ -441,7 +488,7 @@ onMounted(async () => {
           </view>
           <view class="cycle-actions">
             <button
-              v-if="snapshot.selectedCycle?.id !== snapshot.activeCycle.id"
+              v-if="snapshot.activeCycle"
               class="calendar-button"
               @click="viewCycle(snapshot.activeCycle)"
             >
@@ -463,7 +510,9 @@ onMounted(async () => {
         </view>
       </view>
 
-      <view v-if="snapshot.selectedCycle" class="card calendar-card">
+      </template>
+
+      <view v-if="page === 'today' && snapshot.selectedCycle" class="card calendar-card">
         <view class="cycle-heading">
           <view>
             <text class="card-title">{{ snapshot.selectedCycle.status === 'active' ? '进行中' : '已归档' }}周期日期</text>
@@ -474,6 +523,7 @@ onMounted(async () => {
             :value="snapshot.selectedDate"
             :start="snapshot.selectedCycle.startDate"
             :end="snapshot.selectedCycle.endDate"
+            :disabled="busy"
             @change="chooseCalendarDate"
           >
             <view class="calendar-button">完整日历</view>
@@ -485,6 +535,7 @@ onMounted(async () => {
             :key="date"
             class="date-button"
             :class="{ selected: date === snapshot.selectedDate }"
+            :disabled="busy"
             @click="openDate(date, snapshot.selectedCycle?.id)"
           >
             <text>周{{ weekdayLabel(date) }}</text>
@@ -520,7 +571,7 @@ onMounted(async () => {
         <text v-if="snapshot.isIndulgenceDay" class="profile-meta">餐食可自愿记录；已记录摄入不代表全天总摄入，未记录不表示零摄入。</text>
       </view>
 
-      <view v-if="snapshot.selectedCycle && snapshot.isBlankDate" class="card blank-card">
+      <view v-if="page === 'today' && snapshot.selectedCycle && snapshot.isBlankDate" class="card blank-card">
         <text class="card-title">本日暂无记录</text>
         <text class="empty-copy">没有日型、营养、餐食、训练或身体记录，保持空白。</text>
       </view>
@@ -563,14 +614,24 @@ onMounted(async () => {
         </view>
       </view>
 
-      <MealDiary v-if="snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!(canRecordToday && snapshot.baseline)" :disabled="busy" :selected-group="selectedGroup" @change="snapshot = $event" @select="selectedGroup = $event" @working="busy = $event" />
-      <text v-if="canRecordToday && snapshot.baseline" class="section-title">录入餐次：{{ visibleGroups.find((group) => group.id === selectedGroup)?.name ?? '请先显示或新增餐次' }}</text>
-
-      <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" @add="addFood" />
+      <MealDiary v-if="snapshot.selectedCycle" :snapshot="snapshot" :can-edit="!!(canRecordToday && snapshot.baseline)" :disabled="busy" :selected-group="selectedGroup" :focus-selected="focusMeal" @change="snapshot = $event" @select="openFoodGroup" @working="busy = $event" />
+      </template>
+      <template v-if="page === 'food'">
+        <view class="card">
+          <text class="section-title">录入餐次：{{ visibleGroups.find((group) => group.id === selectedGroup)?.name ?? '请先显示或新增餐次' }}</text>
+          <view class="meal-targets"><button v-for="group in visibleGroups" :key="group.id" :disabled="busy" :class="{ selected: selectedGroup === group.id }" @click="selectedGroup = group.id">{{ group.name }}</button></view>
+          <text v-if="!canRecordToday" class="profile-meta">当前日期或周期仅供查看，不能新增餐食。</text>
+          <text v-else-if="!snapshot.baseline" class="profile-meta">请先在首页选择当天日型，再录入餐食。</text>
+          <button v-if="snapshot.selectedCycle && selectedGroup" :disabled="busy" @click="viewMeal">查看该餐</button>
+        </view>
+        <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" :saved-meal-revision="savedMealRevision" :context-key="snapshot.selectedDate + ':' + snapshot.selectedCycle?.id + ':' + selectedGroup" @add="addFood" />
       </template>
       <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
       <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
+      <view class="bottom-tabs" role="navigation" aria-label="主要页面">
+        <button v-for="tab in tabs" :key="tab.value" role="button" :aria-label="tab.label" :aria-pressed="page === tab.value" :class="{ selected: page === tab.value }" :disabled="busy" @click="switchPage(tab.value)">{{ tab.label }}</button>
+      </view>
     </template>
   </view>
 </template>
@@ -582,7 +643,7 @@ page {
 
 .page-shell {
   min-height: 100vh;
-  padding: 36rpx 28rpx 72rpx;
+  padding: 36rpx 28rpx calc(160rpx + env(safe-area-inset-bottom));
   color: #1c2b23;
   background: #f4f7f5;
   box-sizing: border-box;
@@ -593,9 +654,15 @@ page {
   flex-direction: column;
   margin-bottom: 28rpx;
 }
-.page-tabs { display: flex; gap: 16rpx; margin-bottom: 24rpx; }
-.page-tabs button { flex: 1; margin: 0; color: #315e47; background: white; }
-.page-tabs .selected { color: white; background: #1f7a4c; }
+.bottom-tabs { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: flex; padding: 12rpx 16rpx calc(12rpx + env(safe-area-inset-bottom)); border-top: 1rpx solid #dce4de; background: white; }
+.bottom-tabs button { flex: 1; min-width: 0; margin: 0; padding: 12rpx 0; font-size: 26rpx; line-height: 1.8; color: #6b776f; background: white; }
+.bottom-tabs button::after { border: none; }
+.bottom-tabs .selected { color: #1f7a4c; background: #e5f2ea; font-weight: 700; }
+.meal-targets { display: flex; flex-wrap: wrap; gap: 12rpx; margin-bottom: 20rpx; }
+.meal-targets button { margin: 0; font-size: 24rpx; }
+.meal-targets .selected { color: white; background: #1f7a4c; }
+.context-card .calendar-button { margin-top: 20rpx; }
+.profile-meta { display: block; line-height: 1.6; }
 
 .eyebrow {
   color: #4b7860;

@@ -1,16 +1,25 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
+import { getCurrentInstance, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { fatLossDiary } from "../application/runtime";
 import type { DiarySnapshot, MealRecord, MealSummary, Nutrients } from "../domain/diary";
 import { parseFoodNumber } from "../domain/foodLibrary";
 
-const props = defineProps<{ snapshot: DiarySnapshot; canEdit: boolean; disabled: boolean; selectedGroup: string }>();
+const props = defineProps<{ snapshot: DiarySnapshot; canEdit: boolean; disabled: boolean; selectedGroup: string; focusSelected?: boolean }>();
 const emit = defineEmits<{
   (event: "change", snapshot: DiarySnapshot): void;
   (event: "select", id: string): void;
   (event: "working", value: boolean): void;
 }>();
-const expanded = reactive<Record<string, boolean>>({ breakfast: true });
+const expanded = reactive<Record<string, boolean>>({ [props.selectedGroup]: true });
+const instance = getCurrentInstance();
+onMounted(async () => {
+  if (!props.focusSelected) return;
+  await nextTick();
+  uni.createSelectorQuery().in(instance?.proxy).select("#meal-" + props.selectedGroup).boundingClientRect((result) => {
+    const rect = result as UniApp.NodeInfo;
+    if (typeof rect?.top === "number") uni.pageScrollTo({ scrollTop: Math.max(0, rect.top - 16), duration: 0 });
+  }).exec();
+});
 const showConfig = ref(false);
 const names = reactive<Record<string, string>>({});
 const newName = ref("");
@@ -100,10 +109,10 @@ async function correct(meal: MealRecord) {
       <input v-model="newName" aria-label="新增餐次名称" maxlength="30" placeholder="新增餐次名称" />
       <button role="button" :disabled="busy || disabled" @click="run(async () => { const result = await fatLossDiary.addMealGroup(newName, selection()); newName = ''; return result; })">新增餐次</button>
     </view>
-    <view v-for="group in snapshot.mealGroups.filter((item) => !item.hidden)" :key="group.id" class="card meal-card">
+    <view v-for="group in snapshot.mealGroups.filter((item) => !item.hidden)" :key="group.id" :id="'meal-' + group.id" class="card meal-card">
       <view class="heading">
         <button role="button" class="group-title" :aria-expanded="!!expanded[group.id]" @click="expanded[group.id] = !expanded[group.id]">{{ group.name }} · {{ group.meals.length }} 条 · {{ expanded[group.id] ? '收起' : '展开' }}</button>
-        <button role="button" v-if="canEdit" :disabled="busy || disabled" :class="{ selected: selectedGroup === group.id }" @click="emit('select', group.id); expanded[group.id] = true">{{ selectedGroup === group.id ? '已选餐次' : `录入到${group.name}` }}</button>
+        <button role="button" v-if="canEdit" :disabled="busy || disabled" :class="{ selected: selectedGroup === group.id }" @click="emit('select', group.id); expanded[group.id] = true">{{ `添加食材到${group.name}` }}</button>
       </view>
       <text class="meta meal-total">餐次汇总：{{ nutrients(group.actual) }}</text>
       <view v-if="expanded[group.id]">

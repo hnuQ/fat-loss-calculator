@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { foodLibrary } from "../application/runtime";
 import type { Food, Nutrients } from "../domain/diary";
 import { parseFoodNumber, validateCustomFood, type CustomFoodInput } from "../domain/foodLibrary";
 
-const props = defineProps<{ canAdd: boolean; disabled?: boolean }>();
+const props = defineProps<{ canAdd: boolean; disabled?: boolean; savedMealRevision?: number; contextKey?: string }>();
 const emit = defineEmits<{ (event: "add", food: Food, amount: number): void }>();
 const query = ref("");
 const filter = ref<"all" | "recent" | "favorites" | "custom">("all");
@@ -19,6 +19,11 @@ const favorites = ref<string[]>([]);
 const selected = ref<Food>();
 const amount = ref("");
 const preview = ref<Nutrients>();
+watch([() => props.savedMealRevision, () => props.contextKey], () => {
+  selected.value = undefined;
+  amount.value = "";
+  preview.value = undefined;
+});
 const processing = ref(false);
 const busy = computed(() => processing.value || props.disabled);
 const message = ref("");
