@@ -2,8 +2,8 @@
     "name" : "减脂记录",
     "appid" : "__UNI__382F0BE",
     "description" : "离线记录饮食、训练和身体数据，支持完整备份恢复",
-    "versionName" : "0.1.0",
-    "versionCode" : "100",
+    "versionName" : "0.2.0",
+    "versionCode" : "200",
     "vueVersion" : "3",
     "transformPx" : false,
     "uniStatistics" : {
