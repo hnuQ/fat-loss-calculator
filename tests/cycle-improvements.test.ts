@@ -50,7 +50,7 @@ describe("归档周期删除与放纵日", () => {
     await foods.toggleFavorite(custom.id);
     await diary.addMealGroup("测试餐次");
     const plan = (await training.savePlan({ title: "训练模板", content: "自填内容" })).plans[0];
-    await training.saveReminder({ enabled: true, weekdays: [1, 3], time: "18:30" });
+    await training.saveReminder({ enabled: true, mode: "notification", weekdays: [1, 3], time: "18:30" });
     await training.saveRecord({ cycleId, date: "2026-10-04", planId: plan.id, content: plan.content, feeling: "完成" });
     await diary.setIndulgenceDay({ cycleId, date: "2026-10-04", enabled: true });
     const meal = (await diary.saveMeal({ foodId: custom.id, amount: 100, mealSlot: "breakfast" })).meals[0];

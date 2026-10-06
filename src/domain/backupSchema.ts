@@ -31,7 +31,7 @@ const trainingFields = { title: id.max(100), content: id.max(2000), bodyParts: z
 const trainingPlan = z.object({ id, ...metadata, ...trainingFields, deletedAt: timestamp.optional() }).strict();
 const trainingSchedule = z.object({ id, ...metadata, cycleId: id, date, planId: id.optional(), ...trainingFields }).strict();
 const trainingRecord = z.object({ id, ...metadata, cycleId: id, date, planId: id.optional(), scheduleId: id.optional(), ...trainingFields, completed: z.boolean(), feeling: text }).strict();
-const reminder = z.object({ enabled: z.boolean(), weekdays: z.array(number.int().min(1).max(7)), time: text }).strict().refine((value) => !value.enabled || (value.weekdays.length > 0 && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)));
+const reminder = z.object({ enabled: z.boolean(), weekdays: z.array(number.int().min(1).max(7)), time: text, mode: z.enum(["notification", "ring"]).optional(), sound: text.min(1).optional() }).strict().refine((value) => !value.enabled || (value.weekdays.length > 0 && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)));
 
 export const diaryStateSchema = z.object({
   profile: profile.optional(), cycles: z.array(cycle).optional(),

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { diaryBackup } from "../application/runtime";
+import { diaryBackup, trainingDiary } from "../application/runtime";
 import { readBackupFile, readNativeBackupPath, saveBackupFile, shareBackupFile } from "../infrastructure/uniBackupFiles";
 
 const emit = defineEmits<{ (event: "restored"): void }>();
@@ -34,7 +34,10 @@ async function restore() {
   if (!confirmed) return;
   await run(async () => {
     await diaryBackup.restoreBackup(content.value, password.value);
-    content.value = ""; message.value = "完整恢复成功。训练提醒会在打开训练页时同步；系统权限仍需单独授权。";
+    content.value = "";
+    // 恢复成功后才取消旧任务与播放并按恢复后的设置重排未来事件；上面的抛出不改变原安排。
+    const reopened = await trainingDiary.open();
+    message.value = `完整恢复成功。训练提醒已按恢复后的设置重排；系统权限仍需单独授权。${reopened.warning ? `${reopened.warning} ` : ""}`;
     emit("restored");
   });
 }

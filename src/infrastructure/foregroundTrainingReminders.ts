@@ -7,7 +7,7 @@ export function createForegroundTrainingReminders(dependencies: {
   notify(): void;
   onError(message: string): void;
 }): TrainingReminderAdapter {
-  let reminder: TrainingReminder = { enabled: false, weekdays: [], time: "" };
+  let reminder: TrainingReminder = { enabled: false, mode: "notification", weekdays: [], time: "" };
   let visible = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let warning = "";
@@ -41,7 +41,8 @@ export function createForegroundTrainingReminders(dependencies: {
     dependencies.onError(warning);
   }
   return {
-    capability: () => ({ supported: true, message: warning || "微信仅在应用前台打开时到点提示；后台不提醒。" }),
+    // 微信端不提供后台提醒或独立响铃，界面据此不展示响铃模式。
+    capability: () => ({ supported: true, message: warning || "微信仅在应用前台打开时到点提示；后台不提醒，也不支持独立响铃。" }),
     async requestPermission() { return true; },
     async replace(input) { reminder = validateReminder(input); reconcile(); },
     setForeground(value) { visible = value; try { reconcile(); } catch { reportFailure(); } },

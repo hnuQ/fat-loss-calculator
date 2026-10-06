@@ -33,6 +33,11 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
   return {
     capability: () => reminders.capability(),
     requestExactPermission: async () => { await reminders.requestExactPermission?.(); },
+    // 试听与响铃只作用于原生播放器，不保存设置、不安排任务、不消费到时事件。
+    listRingtones: () => run(async () => reminders.listRingtones ? await reminders.listRingtones() : []),
+    previewSound: (uri?: string) => run(async () => { await reminders.previewSound?.(uri); }),
+    stopPreview: () => run(async () => { await reminders.stopPreview?.(); }),
+    stopRinging: () => run(async () => { await reminders.stopRinging?.(); }),
     openWeek: (selection: { cycleId: string; date: string }): Promise<TrainingWeek> => run(async () => {
       assertLocalDate(selection.date);
       const state = await read();

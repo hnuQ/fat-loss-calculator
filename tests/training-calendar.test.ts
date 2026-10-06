@@ -19,7 +19,7 @@ function legacySchedule(overrides: Partial<TrainingSchedule> & { id: string; cyc
 }
 
 function trainingState(overrides: Partial<TrainingState> = {}): TrainingState {
-  return { plans: [], records: [], reminder: { enabled: false, weekdays: [], time: "" }, ...overrides };
+  return { plans: [], records: [], reminder: { enabled: false, mode: "notification", weekdays: [], time: "" }, ...overrides };
 }
 
 async function setup() {

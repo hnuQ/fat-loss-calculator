@@ -35,7 +35,7 @@ async function fixture() {
   legacy.training!.records[0].scheduleId = "legacy-schedule";
   await repository.write(validateBackupState(legacy));
   await training.deletePlan(plan.id);
-  await training.saveReminder({ enabled: true, weekdays: [1, 3], time: "18:30" });
+  await training.saveReminder({ enabled: true, mode: "notification", weekdays: [1, 3], time: "18:30" });
   today = "2026-10-03";
   const state = (await repository.read())!;
   await diary.correctMeal({ id: state.meals[0].id, amount: 140, reason: "数量录入错误" });

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { trainingDiary } from "../application/runtime";
 import type { DiarySnapshot } from "../domain/diary";
-import { trainedRecord, trainingState, type TrainingBodyPart, type TrainingPlan, type TrainingRecord, type TrainingState, type TrainingWeek } from "../domain/training";
+import { trainedRecord, trainingRingStatusText, trainingState, type TrainingBodyPart, type TrainingPlan, type TrainingRecord, type TrainingReminderMode, type TrainingRingtone, type TrainingState, type TrainingWeek } from "../domain/training";
 import { trainingImage } from "../application/trainingImages";
 import { addCalendarDays } from "../domain/cycle";
 import TrainingParts from "./TrainingParts.vue";
@@ -35,10 +35,18 @@ const selectedPlan = computed(() => recordForm.planId ? plans.value.findIndex((p
 /** 训练日期不晚于今天，且不超出所选周期。 */
 const latestRecordDate = computed(() => props.snapshot.selectedCycle ? [props.snapshot.selectedCycle.endDate, props.snapshot.today].sort()[0] : props.snapshot.today);
 const canRecord = computed(() => !!props.snapshot.selectedCycle && recordDate.value >= props.snapshot.selectedCycle.startDate && recordDate.value <= latestRecordDate.value);
-const reminderForm = reactive({ enabled: false, weekdays: [] as number[], hour: "", minute: "" });
+const reminderModes: Array<{ value: TrainingReminderMode; label: string }> = [{ value: "notification", label: "普通通知" }, { value: "ring", label: "响铃提醒" }];
+const reminderForm = reactive({ enabled: false, weekdays: [] as number[], hour: "", minute: "", mode: "notification" as TrainingReminderMode, sound: undefined as string | undefined });
+const ringtones = ref<TrainingRingtone[]>([]);
+/** 系统默认闹钟铃声固定列在首位；响铃声只来自系统可访问的本地闹钟铃声。 */
+const ringtoneOptions = computed(() => ["系统默认闹钟铃声", ...ringtones.value.map((ringtone) => ringtone.title)]);
+const selectedRingtone = computed(() => { const index = ringtones.value.findIndex((ringtone) => ringtone.uri === reminderForm.sound); return reminderForm.sound && index >= 0 ? index + 1 : 0; });
+const ringtoneTitle = computed(() => ringtones.value.find((ringtone) => ringtone.uri === reminderForm.sound)?.title ?? "系统默认闹钟铃声");
+/** 读不到系统状态时如实说明；只有状态可读且无阻碍才说明可用。 */
+const ringStatusText = computed(() => trainingRingStatusText(capability.value.ring));
 function loadReminder() {
   const reminder = state.value.reminder;
-  Object.assign(reminderForm, { enabled: reminder.enabled, weekdays: [...reminder.weekdays], hour: reminder.time.split(":")[0] || "", minute: reminder.time.split(":")[1] || "" });
+  Object.assign(reminderForm, { enabled: reminder.enabled, weekdays: [...reminder.weekdays], hour: reminder.time.split(":")[0] || "", minute: reminder.time.split(":")[1] || "", mode: reminder.mode, sound: reminder.sound });
   capability.value = trainingDiary.capability();
 }
 async function refreshReminderCapability() {
@@ -46,7 +54,7 @@ async function refreshReminderCapability() {
   catch (error) { message.value = error instanceof Error ? error.message : "无法读取训练提醒设置"; }
 }
 onMounted(() => uni.onAppShow(refreshReminderCapability));
-onUnmounted(() => uni.offAppShow(refreshReminderCapability));
+onUnmounted(() => { uni.offAppShow(refreshReminderCapability); void trainingDiary.stopPreview(); });
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
 /** 把日期收进所选周期与今天之间；周期整体在未来时返回尚未开始的周期首日。 */
 function clampDate(date?: string) {
@@ -82,6 +90,22 @@ async function moveWeek(offset: number) { await run(async () => { weekDate.value
 function toggleWeekday(day: number) { reminderForm.weekdays = reminderForm.weekdays.includes(day) ? reminderForm.weekdays.filter((item) => item !== day) : [...reminderForm.weekdays, day]; }
 function setSaveAsPlan(event: Event) { recordForm.saveAsPlan = (event as unknown as { detail: { value: boolean } }).detail.value; }
 function setReminderEnabled(event: Event) { reminderForm.enabled = (event as unknown as { detail: { value: boolean } }).detail.value; }
+async function loadRingtones() {
+  if (!capability.value.ring || ringtones.value.length) return;
+  try { ringtones.value = await trainingDiary.listRingtones(); }
+  catch (error) { message.value = error instanceof Error ? error.message : "无法读取系统铃声"; }
+}
+async function setReminderMode(mode: TrainingReminderMode) {
+  if (reminderForm.mode === mode) return;
+  reminderForm.mode = mode;
+  // 离开响铃模式先结束试听，不留后台播放。
+  if (mode !== "ring") { await trainingDiary.stopPreview(); return; }
+  await run(loadRingtones);
+}
+function chooseRingtone(event: Event) { const index = Number(textValue(event)); reminderForm.sound = index > 0 ? ringtones.value[index - 1]?.uri : undefined; }
+async function previewRingtone() { await run(async () => { await trainingDiary.previewSound(reminderForm.sound); message.value = "试听最多 3 秒；离开训练页会结束试听"; }); }
+async function stopPreview() { await run(async () => { await trainingDiary.stopPreview(); }); }
+async function stopRinging() { await run(async () => { await trainingDiary.stopRinging(); capability.value = trainingDiary.capability(); message.value = "已停止本次响铃，下周安排保留"; }); }
 function textValue(event: Event) { return (event as unknown as { detail: { value: string } }).detail.value; }
 async function run(action: () => Promise<void>) {
   if (busy.value || props.disabled) return;
@@ -105,17 +129,25 @@ async function saveRecord() {
 async function deleteRecord(id: string) { await run(async () => { emit("change", await trainingDiary.deleteRecord(id)); state.value = await trainingDiary.open(); await loadWeek(); resetRecord(); message.value = "训练记录已删除"; }); }
 async function saveReminder() { await run(async () => {
   if (reminderForm.enabled && (!/^\d{1,2}$/.test(reminderForm.hour) || !/^\d{1,2}$/.test(reminderForm.minute))) throw new Error("请填写数字时间：00:00–23:59（时 00–23，分 00–59）");
-  state.value = await trainingDiary.saveReminder({ enabled: reminderForm.enabled, weekdays: reminderForm.weekdays, time: `${reminderForm.hour.padStart(2, "0")}:${reminderForm.minute.padStart(2, "0")}` });
-  loadReminder(); message.value = reminderForm.enabled ? "训练提醒设置已保存" : "训练提醒已关闭";
+  if (reminderForm.enabled && reminderForm.mode === "ring" && !capability.value.ring) throw new Error("当前端不支持独立响铃，请选择普通通知");
+  if (reminderForm.enabled && reminderForm.mode === "ring" && capability.value.ring!.blockers.length) message.value = ringStatusText.value;
+  await trainingDiary.stopPreview();
+  state.value = await trainingDiary.saveReminder({ enabled: reminderForm.enabled, weekdays: reminderForm.weekdays, time: `${reminderForm.hour.padStart(2, "0")}:${reminderForm.minute.padStart(2, "0")}`, mode: reminderForm.mode, sound: reminderForm.sound });
+  loadReminder(); message.value = reminderForm.enabled ? (reminderForm.mode === "ring" ? `响铃提醒设置已保存。${ringStatusText.value}` : "训练提醒设置已保存") : "训练提醒已关闭";
 }); }
 async function requestExactPermission() { await run(async () => { await trainingDiary.requestExactPermission(); capability.value = trainingDiary.capability(); }); }
 onMounted(async () => {
-  await run(async () => { const opened = await trainingDiary.open(); state.value = opened; loadReminder(); recordDate.value = clampDate(props.snapshot.selectedDate); weekDate.value = clampDate(props.snapshot.selectedDate); await loadWeek(); message.value = opened.warning; });
+  await run(async () => { const opened = await trainingDiary.open(); state.value = opened; loadReminder(); recordDate.value = clampDate(props.snapshot.selectedDate); weekDate.value = clampDate(props.snapshot.selectedDate); await loadWeek(); message.value = opened.warning; if (state.value.reminder.mode === "ring") await loadRingtones(); });
 });
 </script>
 
 <template>
   <view class="training-diary">
+  <view v-if="capability.ring && capability.ring.ringing" class="card ringing-card">
+    <text class="title">正在响铃</text>
+    <text class="meta">本次训练提醒正在响铃，最多 10 秒后自动停止；停止只结束本次，下周安排保留。</text>
+    <button role="button" class="primary" :disabled="busy || disabled" @click="stopRinging">停止响铃</button>
+  </view>
     <view v-if="week && snapshot.selectedCycle" class="card">
       <text class="title">训练周历</text>
       <text class="meta">只展示已经发生的实际训练。选择星期可直接补录当天记录；浅绿色表示当天已记录，空白表示没有训练记录。</text>
@@ -225,6 +257,22 @@ onMounted(async () => {
         </view>
         <text class="meta">提醒时间范围：00:00–23:59</text>
         <button v-if="capability.exactPermissionNeeded" role="button" :disabled="busy || disabled" @click="requestExactPermission">允许准时提醒</button>
+        <view v-if="capability.ring" class="ring-mode">
+          <text class="meta">提醒方式</text>
+          <view class="weekday-row">
+            <button role="button" v-for="mode in reminderModes" :key="mode.value" :aria-label="`提醒方式${mode.label}`" :aria-pressed="reminderForm.mode === mode.value" :class="{ selected: reminderForm.mode === mode.value }" :disabled="busy || disabled" @click="setReminderMode(mode.value)">{{ mode.label }}</button>
+          </view>
+          <text v-if="reminderForm.mode === 'ring'" class="meta">响铃会短暂打断其他音频，使用闹钟音量，并显示后台服务通知；切回普通通知可随时结束。响铃与普通通知渠道的声音分别由系统控制。</text>
+          <template v-if="reminderForm.mode === 'ring'">
+            <picker :range="ringtoneOptions" :value="selectedRingtone" :disabled="busy || disabled" @change="chooseRingtone"><view class="time-value">响铃铃声：{{ ringtoneTitle }}</view></picker>
+            <view class="actions">
+              <button role="button" :disabled="busy || disabled" @click="previewRingtone">试听最多 3 秒</button>
+              <button role="button" :disabled="busy || disabled" @click="stopPreview">停止试听</button>
+              <button v-if="capability.ring.ringing" role="button" class="primary" :disabled="busy || disabled" @click="stopRinging">停止响铃</button>
+            </view>
+            <text class="meta">{{ ringStatusText }}</text>
+          </template>
+        </view>
       </view>
       <button role="button" v-if="capability.supported || state.reminder.enabled" class="primary" :disabled="busy || disabled" @click="saveReminder">保存训练提醒设置</button>
       <text class="meta">{{ state.reminder.enabled ? `已保存：每周${state.reminder.weekdays.map((day) => weekdays[day - 1]).join('、')} ${state.reminder.time}` : '训练提醒已关闭' }}</text>
@@ -258,4 +306,6 @@ button { margin: 0; font-size: 24rpx; color: #315e47; background: #f7faf8; }
 .project { padding: 16rpx; margin-top: 12rpx; border-radius: 14rpx; background: #f7faf8; }
 .completed { background: #e3f3e8; }
 .decoration { display: block; width: 100%; max-width: 560rpx; margin: 20rpx auto; border-radius: 18rpx; }
+.ringing-card { border-color: #1f7a4c; background: #e3f3e8; }
+.ring-mode { margin-top: 24rpx; padding-top: 18rpx; border-top: 1rpx solid #edf1ee; }
 </style>
