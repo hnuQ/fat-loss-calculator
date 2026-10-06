@@ -51,7 +51,7 @@ describe("归档周期删除与放纵日", () => {
     await diary.addMealGroup("测试餐次");
     const plan = (await training.savePlan({ title: "训练模板", content: "自填内容" })).plans[0];
     await training.saveReminder({ enabled: true, weekdays: [1, 3], time: "18:30" });
-    await training.saveRecord({ title: plan.title, content: plan.content, planId: plan.id, completed: true, feeling: "完成" });
+    await training.saveRecord({ cycleId, date: "2026-10-04", planId: plan.id, content: plan.content, feeling: "完成" });
     await diary.setIndulgenceDay({ cycleId, date: "2026-10-04", enabled: true });
     const meal = (await diary.saveMeal({ foodId: custom.id, amount: 100, mealSlot: "breakfast" })).meals[0];
     const body = (await diary.recordWeight({ weightKg: 69 })).bodyRecords[0];
@@ -62,7 +62,7 @@ describe("归档周期删除与放纵日", () => {
     const next = await diary.startCycle({ startDate: "2026-10-05", dayType: "rest" });
     await diary.recordWeight({ weightKg: 67 });
     await diary.saveMeal({ foodId: custom.id, amount: 50, mealSlot: "lunch" });
-    await training.saveRecord({ title: "第二周期训练", content: "第二周期内容", completed: false, feeling: "" });
+    await training.saveRecord({ cycleId: next.activeCycle!.id, date: "2026-10-05", content: "第二周期内容", feeling: "" });
     const before = JSON.parse(await backup.exportBackup()).state;
     await diary.openDiary({ cycleId, date: "2026-10-04" });
     const deleted = await diary.deleteArchivedCycle(cycleId, { cycleId, date: "2026-10-04" });

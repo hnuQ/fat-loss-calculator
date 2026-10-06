@@ -1,4 +1,4 @@
-export function mountNavigationHarness(): Promise<{
+export function mountNavigationHarness(overrides?: Record<string, unknown>): Promise<{
   click(label: string): Promise<void>;
   input(label: string, value: string): Promise<void>;
   amount(): string | undefined;

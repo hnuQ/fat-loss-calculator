@@ -1,8 +1,7 @@
 import type { Clock, DiaryRepository, DiaryState } from "../domain/diary";
-import { trainingState, validateReminder, validateTraining, type TrainingBodyPart, type TrainingRecord, type TrainingReminder, type TrainingReminderAdapter, type TrainingState } from "../domain/training";
+import { trainedRecord, trainingRecordTitle, trainingState, validateReminder, validateTraining, validateTrainingContent, type TrainingBodyPart, type TrainingRecord, type TrainingReminder, type TrainingReminderAdapter, type TrainingState, type TrainingWeek } from "../domain/training";
 import type { FatLossDiary } from "./cycleDiary";
 import { addCalendarDays, assertLocalDate, toCalendarDayNumber } from "../domain/cycle";
-import type { TrainingSchedule, TrainingWeek } from "../domain/training";
 
 export function createTrainingDiary(dependencies: { repository: DiaryRepository; clock: Clock; diary: FatLossDiary; reminders: TrainingReminderAdapter }) {
   const { repository, clock, diary, reminders } = dependencies;
@@ -20,14 +19,16 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
     state.training = trainingState(state.training);
     return state as DiaryState & { training: TrainingState };
   }
-  async function editableRecord(state: DiaryState & { training: TrainingState }, recordId?: string) {
-    const snapshot = await diary.openDiary();
-    const cycle = snapshot.activeCycle;
-    if (!cycle || snapshot.today < cycle.startDate || snapshot.today > cycle.endDate) throw new Error("请先创建包含今天的进行中周期");
-    const record = recordId ? state.training.records.find((item) => item.id === recordId) : undefined;
-    if (recordId && !record) throw new Error("未找到训练记录");
-    if (record && (record.date !== snapshot.today || record.cycleId !== cycle.id)) throw new Error("结束日期和已归档周期的训练内容、完成状态和感受不可修改或删除");
-    return { cycle, record, today: snapshot.today };
+  /** 选定周期内的实际记录才可补录、修改和删除；日期须在周期内且不晚于今天。 */
+  function editableCycle(state: DiaryState & { training: TrainingState }, cycleId: string, today: string) {
+    const cycle = state.cycles?.find((item) => item.id === cycleId);
+    if (!cycle) throw new Error("未找到减脂周期");
+    return cycle;
+  }
+  function assertRecordDate(date: string, cycle: { startDate: string; endDate: string }, today: string) {
+    assertLocalDate(date, "训练日期");
+    if (date > today) throw new Error("不能记录未来的训练");
+    if (date < cycle.startDate || date > cycle.endDate) throw new Error("训练日期不在所选周期内");
   }
   return {
     capability: () => reminders.capability(),
@@ -35,48 +36,14 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
     openWeek: (selection: { cycleId: string; date: string }): Promise<TrainingWeek> => run(async () => {
       assertLocalDate(selection.date);
       const state = await read();
-      const cycle = state.cycles?.find((item) => item.id === selection.cycleId);
-      if (!cycle) throw new Error("未找到减脂周期");
+      const cycle = editableCycle(state, selection.cycleId, clock.today());
       const monday = addCalendarDays(selection.date, -((toCalendarDayNumber(selection.date) + 3) % 7));
       return { days: Array.from({ length: 7 }, (_, index) => {
         const date = addCalendarDays(monday, index);
-        const records = state.training.records.filter((record) => record.cycleId === cycle.id && record.date === date);
-        return { date, inCycle: date >= cycle.startDate && date <= cycle.endDate, records,
-          projects: (state.training.schedules ?? []).filter((item) => item.cycleId === cycle.id && item.date === date).map((item) => {
-            const record = records.find((record) => record.scheduleId === item.id);
-            return { ...item, completed: record?.completed === true, record };
-          }) };
+        // 旧未完成记录不算已练，未记录和旧排期日期保持空白。
+        const records = state.training.records.filter((record) => record.cycleId === cycle.id && record.date === date && trainedRecord(record));
+        return { date, inCycle: date >= cycle.startDate && date <= cycle.endDate, records };
       }) };
-    }),
-    saveSchedule: (input: { id?: string; cycleId: string; date: string; planId?: string; title: string; content: string; bodyParts?: TrainingBodyPart[] }) => run(async () => {
-      await diary.openDiary();
-      const state = await read();
-      assertLocalDate(input.date);
-      const cycle = state.cycles?.find((item) => item.id === input.cycleId);
-      if (!cycle || cycle.status !== "active" || input.date < clock.today() || input.date < cycle.startDate || input.date > cycle.endDate) throw new Error("只能安排进行中周期内今天或未来的训练，过去排期只读");
-      const schedules = state.training.schedules ??= [];
-      const existing = input.id ? schedules.find((item) => item.id === input.id) : undefined;
-      if (input.id && (!existing || existing.cycleId !== cycle.id || existing.date < clock.today())) throw new Error("过去排期只读或未找到排期");
-      if (existing && existing.date !== input.date && state.training.records.some((record) => record.scheduleId === existing.id)) throw new Error("已有实际记录的排期不能更改日期");
-      if (input.planId && !state.training.plans.some((plan) => plan.id === input.planId && (!plan.deletedAt || existing?.planId === plan.id))) throw new Error("未找到训练计划");
-      const fields = validateTraining(input.title, input.content, input.bodyParts);
-      const now = timestamp();
-      const values = { ...fields, cycleId: cycle.id, date: input.date };
-      let schedule: TrainingSchedule;
-      if (existing) { Object.assign(existing, values, { updatedAt: now, revision: existing.revision + 1 }); schedule = existing; }
-      else { schedule = { ...values, planId: input.planId, id: id("training-schedule"), ownerId: "local-user", createdAt: now, updatedAt: now, revision: 1, syncState: "local" }; schedules.push(schedule); }
-      await repository.write(state);
-      return schedule;
-    }),
-    deleteSchedule: (scheduleId: string) => run(async () => {
-      await diary.openDiary();
-      const state = await read();
-      const schedule = state.training.schedules?.find((item) => item.id === scheduleId);
-      const cycle = state.cycles?.find((item) => item.id === schedule?.cycleId);
-      if (!schedule || !cycle || cycle.status !== "active" || schedule.date < clock.today()) throw new Error("过去排期只读或未找到排期");
-      state.training.schedules = state.training.schedules!.filter((item) => item.id !== scheduleId);
-      for (const record of state.training.records) if (record.scheduleId === scheduleId) delete record.scheduleId;
-      await repository.write(state);
     }),
     open: () => run(async () => {
       const stored = await repository.read();
@@ -111,37 +78,39 @@ export function createTrainingDiary(dependencies: { repository: DiaryRepository;
       await repository.write(state);
       return state.training;
     }),
-    saveRecord: (input: { id?: string; planId?: string; scheduleId?: string; date?: string; title: string; content: string; completed: boolean; feeling: string; bodyParts?: TrainingBodyPart[]; saveAsPlan?: boolean }) => run(async () => {
+    saveRecord: (input: { id?: string; cycleId: string; planId?: string; date: string; content: string; bodyParts?: TrainingBodyPart[]; feeling: string; saveAsPlan?: boolean }) => run(async () => {
       // Normalize cycle state before reading the state to be written.
       await diary.openDiary();
       const state = await read();
-      const { cycle, record, today } = await editableRecord(state, input.id);
-      if (input.date && input.date !== today) throw new Error("只能记录今天的训练");
-      const fields = validateTraining(input.title, input.content, input.bodyParts);
-      if (typeof input.completed !== "boolean") throw new Error("请选择训练完成状态");
+      const today = clock.today();
+      const cycle = editableCycle(state, input.cycleId, today);
+      const existing = input.id ? state.training.records.find((item) => item.id === input.id) : undefined;
+      if (input.id && !existing) throw new Error("未找到训练记录");
+      if (existing && existing.cycleId !== cycle.id) throw new Error("不能把训练记录移到其他周期");
+      assertRecordDate(input.date, cycle, today);
+      const fields = validateTrainingContent(input.content, input.bodyParts);
       if (typeof input.feeling !== "string" || input.feeling.trim().length > 2000) throw new Error("训练感受最多 2000 字");
-      if (input.planId && !state.training.plans.some((plan) => plan.id === input.planId && (!plan.deletedAt || record?.planId === plan.id))) throw new Error("未找到训练计划");
-      const scheduleId = input.scheduleId ?? record?.scheduleId;
-      if (scheduleId && !state.training.schedules?.some((item) => item.id === scheduleId && item.cycleId === cycle.id && item.date === today)) throw new Error("未找到当天训练排期");
-      if (scheduleId && state.training.records.some((item) => item.scheduleId === scheduleId && item.id !== record?.id)) throw new Error("该排期已有实际记录，请编辑当天训练");
+      const plan = input.planId ? state.training.plans.find((item) => item.id === input.planId && (!item.deletedAt || existing?.planId === item.id)) : undefined;
+      if (input.planId && !plan) throw new Error("未找到训练计划");
       const now = timestamp();
-      const values = { ...fields, scheduleId, completed: input.completed, feeling: input.feeling.trim() };
-      if (input.saveAsPlan) state.training.plans.push({ ...fields, bodyParts: [...fields.bodyParts], id: id("training-plan"), ownerId: "local-user", createdAt: now, updatedAt: now, revision: 1, syncState: "local" });
-      if (record) Object.assign(record, values, { updatedAt: now, revision: record.revision + 1 });
-      else {
-        const created: TrainingRecord = { ...values, id: id("training-record"), ownerId: "local-user", cycleId: cycle.id, date: today, planId: input.planId, createdAt: now, updatedAt: now, revision: 1, syncState: "local" };
-        state.training.records.push(created);
-      }
+      // 名称不再由用户填写：模板名称优先，其次保留旧记录名称，最后用部位组合或默认值。
+      const values = { ...fields, title: trainingRecordTitle(plan?.title ?? existing?.title, fields.bodyParts), planId: plan?.id ?? existing?.planId, feeling: input.feeling.trim(), completed: true };
+      if (input.saveAsPlan) state.training.plans.push({ title: values.title, content: values.content, bodyParts: [...values.bodyParts], id: id("training-plan"), ownerId: "local-user", createdAt: now, updatedAt: now, revision: 1, syncState: "local" });
+      if (existing) Object.assign(existing, values, { cycleId: cycle.id, date: input.date, updatedAt: now, revision: existing.revision + 1 });
+      else state.training.records.push({ ...values, id: id("training-record"), ownerId: "local-user", cycleId: cycle.id, date: input.date, createdAt: now, updatedAt: now, revision: 1, syncState: "local" });
       await repository.write(state);
-      return diary.openDiary({ cycleId: cycle.id, date: today });
+      return diary.openDiary({ cycleId: cycle.id, date: input.date });
     }),
     deleteRecord: (recordId: string) => run(async () => {
       await diary.openDiary();
       const state = await read();
-      const { cycle, today } = await editableRecord(state, recordId);
-      state.training.records = state.training.records.filter((record) => record.id !== recordId);
+      const record = state.training.records.find((item) => item.id === recordId);
+      if (!record) throw new Error("未找到训练记录");
+      const cycle = editableCycle(state, record.cycleId, clock.today());
+      if (record.date > clock.today()) throw new Error("不能删除未来的训练记录");
+      state.training.records = state.training.records.filter((item) => item.id !== recordId);
       await repository.write(state);
-      return diary.openDiary({ cycleId: cycle.id, date: today });
+      return diary.openDiary({ cycleId: cycle.id, date: record.date });
     }),
     saveReminder: (input: TrainingReminder) => run(async () => {
       const reminder = validateReminder(input);

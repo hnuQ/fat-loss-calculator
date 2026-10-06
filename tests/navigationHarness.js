@@ -7,18 +7,20 @@ const require = createRequire(import.meta.url);
 const Vue = require("vue");
 
 // Render the real page and food form; other panels are outside these journeys.
-export async function mountNavigationHarness() {
+export async function mountNavigationHarness(overrides = {}) {
   const nutrients = { carbohydrateGrams: 0, proteinGrams: 0, fatGrams: 0, energyKcal: 0 };
   const cycle = { id: "active", startDate: "2026-10-03", endDate: "2026-12-31", status: "active" };
+  const archived = { id: "archived", startDate: "2026-07-01", endDate: "2026-09-28", status: "archived" };
   const groups = ["breakfast", "morning-snack", "lunch", "evening-snack", "dinner", "post-workout"];
   const names = ["早餐", "午加餐", "午餐", "晚加餐", "晚餐", "练后餐"];
   let snapshot = {
     profile: { nickname: "测试", sex: "male", age: 30, heightCm: 175, currentWeightKg: 70, weeklyExercise: "medium", hasFatLossExperience: false },
-    today: "2026-10-05", selectedDate: "2026-10-05", selectedCycle: cycle, activeCycle: cycle, cycles: [cycle],
+    today: "2026-10-05", selectedDate: "2026-10-05", selectedCycle: cycle, activeCycle: cycle, cycles: [cycle, archived],
     dateStrip: [], bmi: 22.9, actual: nutrients, baseline: { ...nutrients, energyKcal: 1715 },
     mealGroups: groups.map((id, i) => ({ id, name: names[i], hidden: false, meals: [], actual: nutrients })),
     mealCorrections: [], originalMeals: [], isBlankDate: false,
   };
+  snapshot = { ...snapshot, ...overrides };
   const savedMeals = [];
   let writeFailure = false;
   const food = { id: "egg", name: "全蛋（按个）", unit: "item", baseAmount: 1, nutrients: { ...nutrients, energyKcal: 72 } };
@@ -50,6 +52,8 @@ export async function mountNavigationHarness() {
       if (name.endsWith("FoodLibrary.vue")) return { default: component("src/components/FoodLibrary.vue") };
       if (name.endsWith("foodLibrary")) return { parseFoodNumber: (value) => { const n = Number(value); if (!(n > 0)) throw new Error("食用量必须大于 0"); return n; } };
       if (name.endsWith("trainingImages")) return { trainingImage: () => "" };
+      // The backup panel is render-only here, so mark its position instead of its form controls.
+      if (name.endsWith("BackupManager.vue")) return { default: { name: "BackupManager", render: () => Vue.h("view", "完整备份与恢复") } };
       if (name.endsWith(".vue")) return { default: { render: () => null } };
       throw new Error("Unexpected test import: " + name);
     };

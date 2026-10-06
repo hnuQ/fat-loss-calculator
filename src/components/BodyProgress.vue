@@ -91,6 +91,7 @@ async function remove(id: string) {
         </picker>
       </label>
       <text class="meta">日期须在所选周期内且不晚于今天；历史及归档周期也可补录、编辑和删除。</text>
+      <text class="meta">建议十天更新一次。</text>
       <text class="meta">可只填写实际测量项；留空表示该条未测量。统一保留一位小数。</text>
       <view class="field-grid">
         <label v-for="field in bodyFields" :key="field.key">

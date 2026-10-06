@@ -7,6 +7,7 @@ import { createFatLossDiary } from "../src/application/fatLossDiary";
 import { createTrainingDiary } from "../src/application/trainingDiary";
 import { createFoodLibrary } from "../src/application/foodLibrary";
 import { createInMemoryDiaryRepository } from "../src/testing/inMemoryDiaryRepository";
+import { validateBackupState } from "../src/domain/backupSchema";
 const randomBytes = (length: number) => globalThis.crypto.getRandomValues(new Uint8Array(length));
 
 const profile = { nickname: "备份测试", sex: "female" as const, age: 30, heightCm: 165, currentWeightKg: 65, weeklyExercise: "medium" as const, hasFatLossExperience: true, targetWeightKg: 60, dayType: "training" as const };
@@ -27,8 +28,12 @@ async function fixture() {
   await diary.saveMeal({ mealSlot: "lunch", foodId: custom.id, amount: 100 });
   await foods.deleteCustomFood(custom.id);
   const plan = (await training.savePlan({ title: "自填训练", content: '内容,含"引号"\n第二行', bodyParts: ["胸", "肩"] })).plans[0];
-  const schedule = await training.saveSchedule({ cycleId, date: today, planId: plan.id, title: plan.title, content: plan.content, bodyParts: plan.bodyParts });
-  await training.saveRecord({ scheduleId: schedule.id, planId: plan.id, title: plan.title, content: plan.content, bodyParts: ["背", "手臂"], completed: true, feeling: "=SUM(1,2)" });
+  await training.saveRecord({ cycleId, date: today, planId: plan.id, content: plan.content, bodyParts: ["背", "手臂"], feeling: "=SUM(1,2)" });
+  // 旧排期与旧关联记录只作为升级前的本地数据写入；新流程不再提供排期写入入口。
+  const legacy = (await repository.read())!;
+  legacy.training!.schedules = [{ id: "legacy-schedule", ownerId: "local-user", cycleId, date: today, title: "旧排期名称", content: "旧排期内容", bodyParts: ["胸", "肩"], createdAt: `${today}T08:00:00.000Z`, updatedAt: `${today}T08:00:00.000Z`, revision: 1, syncState: "local" }];
+  legacy.training!.records[0].scheduleId = "legacy-schedule";
+  await repository.write(validateBackupState(legacy));
   await training.deletePlan(plan.id);
   await training.saveReminder({ enabled: true, weekdays: [1, 3], time: "18:30" });
   today = "2026-10-03";
@@ -133,6 +138,6 @@ describe("完整备份恢复公开旅程", () => {
     expect(emptyDay).not.toContain('"0"');
     expect(await backup.exportCsv("training")).toContain("背、手臂");
     expect(await backup.exportCsv("training")).toContain('"排期ID"');
-    expect(await backup.exportCsv("training")).toContain(JSON.parse(await backup.exportBackup()).state.training.schedules[0].id);
+    expect(await backup.exportCsv("training")).not.toContain("旧排期名称");
   });
 });

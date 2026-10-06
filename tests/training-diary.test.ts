@@ -6,7 +6,7 @@ import { createInMemoryDiaryRepository } from "../src/testing/inMemoryDiaryRepos
 
 async function setup() {
   const repository = createInMemoryDiaryRepository();
-  let today = "2026-10-02";
+  let today = "2026-10-04";
   let granted = true;
   let permissionRequests = 0;
   let failNext = false;
@@ -25,13 +25,14 @@ async function setup() {
   };
   const dependencies = { repository, clock, diary, reminders };
   const training = createTrainingDiary(dependencies);
-  await diary.establishProfile({ nickname: "训练测试", sex: "male", age: 30, heightCm: 175, currentWeightKg: 70, weeklyExercise: "medium", hasFatLossExperience: false, dayType: "training" });
-  return { repository, diary, training, dependencies, calls, scheduled, reopen: () => createTrainingDiary(dependencies), day: (date: string) => { today = date; }, deny: () => { granted = false; }, fail: () => { failNext = true; }, requests: () => permissionRequests };
+  await diary.establishProfile({ nickname: "训练测试", sex: "male", age: 30, heightCm: 175, currentWeightKg: 70, weeklyExercise: "medium", hasFatLossExperience: false });
+  const cycleId = (await diary.startCycle({ startDate: "2026-09-28", dayType: "training" })).activeCycle!.id;
+  return { repository, diary, training, dependencies, calls, scheduled, cycleId, reopen: () => createTrainingDiary(dependencies), day: (date: string) => { today = date; }, deny: () => { granted = false; }, fail: () => { failNext = true; }, requests: () => permissionRequests };
 }
 
-const fields = { title: "自填训练", content: "自己选择的训练内容", completed: false, feeling: "" };
+const fields = { content: "自己选择的训练内容", feeling: "" };
 
-describe("训练计划、当天记录和提醒公开旅程", () => {
+describe("训练计划、实际记录和提醒公开旅程", () => {
   it("数字时间接受午夜和末分钟，拒绝超范围、空白和非数字", async () => {
     const { training } = await setup();
     for (const time of ["00:00", "23:59"]) {
@@ -50,56 +51,64 @@ describe("训练计划、当天记录和提醒公开旅程", () => {
     expect(calls).toEqual([]); expect(requests()).toBe(0);
   });
 
-  it("用户自建计划可编辑删除，记录快照和其他实体保持独立，重开完整保留", async () => {
-    const { training, diary, repository, reopen } = await setup();
+  it("用户自建计划可编辑删除，记录保持独立并保留旧名称，重开完整保留", async () => {
+    const { training, diary, repository, reopen, cycleId } = await setup();
     const before = await diary.openDiary();
-    const plan = (await training.savePlan({ title: "  我的安排  ", content: "  用户填写内容  " })).plans[0];
-    const first = await training.saveRecord({ ...fields, planId: plan.id, title: plan.title, content: plan.content, completed: true, feeling: " 今日感受 " });
-    const record = first.trainingRecords[0];
-    expect(record).toMatchObject({ title: "我的安排", content: "用户填写内容", completed: true, feeling: "今日感受", date: "2026-10-02", revision: 1 });
+    const plan = (await training.savePlan({ title: "  我的安排  ", content: "  用户填写内容  ", bodyParts: ["胸", "肩"] })).plans[0];
+    await training.saveRecord({ cycleId, date: "2026-10-04", planId: plan.id, content: plan.content, bodyParts: plan.bodyParts, feeling: " 今日感受 " });
+    const record = (await training.open()).records[0];
+    expect(record).toMatchObject({ title: "我的安排", content: "用户填写内容", bodyParts: ["胸", "肩"], completed: true, feeling: "今日感受", date: "2026-10-04", revision: 1 });
     await training.savePlan({ id: plan.id, title: "新版计划", content: "新内容" });
     await training.deletePlan(plan.id);
-    expect((await diary.openDiary()).trainingRecords).toEqual([record]);
+    expect((await training.open()).records).toEqual([record]);
     expect((await reopen().open()).records).toEqual([record]);
     const after = await diary.openDiary();
     for (const key of ["baseline", "actual", "remaining", "weights", "bodyRecords", "meals", "dayType"] as const) expect(after[key]).toEqual(before[key]);
-    expect((await repository.read())?.training?.plans[0]).toMatchObject({ revision: 3, deletedAt: "2026-10-02T12:00:00+08:00" });
+    expect((await repository.read())?.training?.plans[0]).toMatchObject({ revision: 3, deletedAt: "2026-10-04T12:00:00+08:00" });
     await expect(training.savePlan({ id: plan.id, title: "恢复", content: "内容" })).rejects.toThrow("未找到");
   });
 
-  it("当天内容、完成状态、感受可修改删除；跨日拒绝全部覆盖和删除", async () => {
-    const { training, diary, day, repository } = await setup();
-    const record = (await training.saveRecord(fields)).trainingRecords[0];
-    await training.saveRecord({ ...fields, id: record.id, content: "修改当天内容", completed: true, feeling: "状态记录" });
-    const saved = (await repository.read())?.training?.records[0];
-    day("2026-10-03");
-    await expect(training.saveRecord({ ...fields, id: record.id })).rejects.toThrow("不可修改或删除");
-    await expect(training.deleteRecord(record.id)).rejects.toThrow("不可修改或删除");
-    await expect(training.saveRecord({ ...fields, date: "2026-10-02" })).rejects.toThrow("今天");
-    expect((await repository.read())?.training?.records[0]).toEqual(saved);
-    expect((await diary.openDiary({ date: "2026-10-02" })).trainingRecords).toEqual([saved]);
-    const next = (await training.saveRecord(fields)).trainingRecords[0];
-    expect((await diary.openDiary()).isBlankDate).toBe(false);
-    await training.deleteRecord(next.id);
-    expect((await diary.openDiary()).isBlankDate).toBe(true);
+  it("记录内容、部位和感受可修改，同日多条独立，删除后列表和周历同步", async () => {
+    const { training, diary, repository, cycleId, day } = await setup();
+    const first = (await training.saveRecord({ cycleId, date: "2026-10-04", ...fields, bodyParts: ["胸"] })).trainingRecords[0];
+    const second = (await training.saveRecord({ cycleId, date: "2026-10-04", content: "慢跑", bodyParts: ["有氧"], feeling: "" })).trainingRecords[1];
+    await training.saveRecord({ id: first.id, cycleId, date: "2026-10-02", content: "改为背部", bodyParts: ["背"], feeling: "状态不错" });
+    const saved = (await repository.read())!.training!.records;
+    expect(saved[0]).toMatchObject({ id: first.id, date: "2026-10-02", bodyParts: ["背"], content: "改为背部", feeling: "状态不错", revision: 2 });
+    expect(saved[1]).toEqual(second);
+    day("2026-10-05");
+    await training.deleteRecord(second.id);
+    expect((await training.open()).records).toMatchObject([{ id: first.id }]);
+    expect((await diary.openDiary({ date: "2026-10-04" })).trainingRecords).toEqual([]);
+    expect((await diary.openDiary({ date: "2026-10-04" })).isBlankDate).toBe(true);
+    expect((await diary.openDiary({ date: "2026-10-02" })).trainingRecords).toMatchObject([{ id: first.id, content: "改为背部" }]);
+    expect((await training.openWeek({ cycleId, date: "2026-10-02" })).days[4].records).toMatchObject([{ id: first.id }]);
   });
 
-  it("归档锁定当天训练，新周期与历史周期隔离", async () => {
-    const { training, diary, day } = await setup();
-    const record = (await training.saveRecord(fields)).trainingRecords[0];
+  it("归档周期内记录仍可修改删除，新周期与历史周期隔离", async () => {
+    const { training, diary, cycleId, day } = await setup();
+    const record = (await training.saveRecord({ cycleId, date: "2026-10-04", ...fields })).trainingRecords[0];
     await diary.archiveActiveCycle();
-    await expect(training.saveRecord({ ...fields, id: record.id })).rejects.toThrow();
-    await expect(training.deleteRecord(record.id)).rejects.toThrow();
-    day("2026-10-03"); await diary.startCycle({ startDate: "2026-10-03", dayType: "rest" });
-    expect((await training.saveRecord(fields)).trainingRecords).toHaveLength(1);
-    expect((await diary.openDiary({ cycleId: record.cycleId, date: record.date })).trainingRecords).toEqual([record]);
-    await expect(training.saveRecord({ ...fields, id: record.id })).rejects.toThrow("不可修改或删除");
+    await training.saveRecord({ id: record.id, cycleId, date: "2026-10-04", content: "归档后修改", feeling: "" });
+    expect((await training.open()).records).toMatchObject([{ id: record.id, content: "归档后修改", revision: 2 }]);
+    day("2026-10-05");
+    const newCycleId = (await diary.startCycle({ startDate: "2026-10-05", dayType: "rest" })).activeCycle!.id;
+    expect((await training.saveRecord({ cycleId: newCycleId, date: "2026-10-05", content: "新周期内容", feeling: "" })).trainingRecords).toHaveLength(1);
+    expect((await diary.openDiary({ cycleId, date: "2026-10-04" })).trainingRecords).toMatchObject([{ id: record.id, content: "归档后修改" }]);
+    await expect(training.saveRecord({ id: record.id, cycleId: newCycleId, date: "2026-10-05", content: "越界", feeling: "" })).rejects.toThrow("不能把训练记录移到其他周期");
+    await training.deleteRecord(record.id);
+    expect((await training.open()).records).toMatchObject([{ content: "新周期内容" }]);
   });
 
-  it.each([{ title: "", content: "内容" }, { title: "名称", content: "  " }, { title: "名".repeat(101), content: "内容" }, { title: "名称", content: "字".repeat(2001) }])("拒绝空白及过长训练输入 %j", async (input) => {
-    const { training } = await setup();
-    await expect(training.savePlan(input)).rejects.toThrow();
-    await expect(training.saveRecord({ ...fields, ...input })).rejects.toThrow();
+  it("拒绝空白及过长的计划名称与训练内容", async () => {
+    const { training, cycleId } = await setup();
+    for (const input of [{ title: "", content: "内容" }, { title: "名称", content: "  " }, { title: "名".repeat(101), content: "内容" }, { title: "名称", content: "字".repeat(2001) }]) {
+      await expect(training.savePlan(input)).rejects.toThrow();
+    }
+    await expect(training.saveRecord({ cycleId, date: "2026-10-04", content: "   ", feeling: "" })).rejects.toThrow();
+    await expect(training.saveRecord({ cycleId, date: "2026-10-04", content: "字".repeat(2001), feeling: "" })).rejects.toThrow();
+    await expect(training.saveRecord({ cycleId, date: "2026-10-04", content: "内容", feeling: "字".repeat(2001) })).rejects.toThrow("训练感受最多 2000 字");
+    expect((await training.open()).plans).toEqual([]);
     expect((await training.open()).records).toEqual([]);
   });
 
@@ -151,7 +160,8 @@ describe("训练计划、当天记录和提醒公开旅程", () => {
   });
 
   it("通知授权期间新增餐食不会被保存提醒的旧快照覆盖", async () => {
-    const { dependencies, diary, repository } = await setup();
+    const { dependencies, diary, repository, cycleId } = await setup();
+    await diary.setDayType({ cycleId, date: "2026-10-04", dayType: "rest" });
     const training = createTrainingDiary({ ...dependencies, reminders: { ...dependencies.reminders,
       async requestPermission() { await diary.saveMeal({ mealSlot: "breakfast", foodId: diary.searchFoods("燕麦")[0].id, amount: 100 }); return true; },
     } });

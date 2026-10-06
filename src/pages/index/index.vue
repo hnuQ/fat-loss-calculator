@@ -268,7 +268,7 @@ async function deleteCycle(cycle: FatLossCycle): Promise<void> {
     const confirmed = await new Promise<boolean>((resolve, reject) => {
       uni.showModal({
         title: "删除归档周期",
-        content: `${cycle.startDate} 至 ${cycle.endDate}。将同时删除该周期的日型、放纵日标记、餐食与纠错、身体与纠错、训练排期及记录。`,
+        content: `${cycle.startDate} 至 ${cycle.endDate}。将同时删除该周期的日型、放纵日标记、餐食与纠错、身体与纠错、训练记录。`,
         confirmText: "删除周期",
         cancelText: "取消",
         success: (result) => resolve(result.confirm),
@@ -344,7 +344,8 @@ onMounted(async () => {
     </view>
 
     <view v-if="message" class="message">{{ message }}</view>
-    <BackupManager v-if="page === 'profile' || !snapshot?.profile" @restored="refresh" />
+    <!-- 首次建档前的恢复入口保持可用；建档后备份区域整体移到“我的”页面最下面。 -->
+    <BackupManager v-if="!snapshot?.profile" @restored="refresh" />
 
     <view v-if="!snapshot?.profile" class="card">
       <text class="card-title">首次启动 · 建立健康档案</text>
@@ -510,6 +511,9 @@ onMounted(async () => {
         </view>
       </view>
 
+      <!-- 完整备份区域在“我的”页面内容之后，导出、恢复与 CSV 入口整体下移且不拆散。 -->
+      <BackupManager @restored="refresh" />
+
       </template>
 
       <view v-if="page === 'today' && snapshot.selectedCycle" class="card calendar-card">
@@ -627,7 +631,7 @@ onMounted(async () => {
         <FoodLibrary :can-add="!!(canRecordToday && snapshot.baseline && selectedGroup)" :disabled="busy" :saved-meal-revision="savedMealRevision" :context-key="snapshot.selectedDate + ':' + snapshot.selectedCycle?.id + ':' + selectedGroup" @add="addFood" />
       </template>
       <BodyProgress v-if="page === 'progress' && snapshot.selectedCycle" :snapshot="snapshot" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
-      <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :can-edit="!!canRecordToday" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
+      <TrainingDiary v-if="page === 'training'" :snapshot="snapshot" :disabled="busy" @change="snapshot = $event" @working="busy = $event" />
 
       <view class="bottom-tabs" role="navigation" aria-label="主要页面">
         <button v-for="tab in tabs" :key="tab.value" role="button" :aria-label="tab.label" :aria-pressed="page === tab.value" :class="{ selected: page === tab.value }" :disabled="busy" @click="switchPage(tab.value)">{{ tab.label }}</button>
