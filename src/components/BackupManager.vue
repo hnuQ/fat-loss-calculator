@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { diaryBackup, trainingDiary } from "../application/runtime";
+import { diaryBackup } from "../application/runtime";
 import { readBackupFile, readNativeBackupPath, saveBackupFile, shareBackupFile } from "../infrastructure/uniBackupFiles";
 
 const emit = defineEmits<{ (event: "restored"): void }>();
@@ -35,9 +35,7 @@ async function restore() {
   await run(async () => {
     await diaryBackup.restoreBackup(content.value, password.value);
     content.value = "";
-    // 恢复成功后才取消旧任务与播放并按恢复后的设置重排未来事件；上面的抛出不改变原安排。
-    const reopened = await trainingDiary.open();
-    message.value = `完整恢复成功。训练提醒已按恢复后的设置重排；系统权限仍需单独授权。${reopened.warning ? `${reopened.warning} ` : ""}`;
+    message.value = "完整恢复成功";
     emit("restored");
   });
 }
@@ -46,7 +44,7 @@ async function restore() {
 <template>
   <view class="backup-card">
     <text class="heading">完整备份与恢复</text>
-    <text>备份包含健康档案、周期、食材、餐次、原始记录、全部历史纠错、训练计划和提醒设置。密码无法找回。</text>
+    <text>备份包含健康档案、周期、食材、餐次、原始记录、全部历史纠错、训练计划与实际训练记录。密码无法找回。</text>
     <label class="row"><text>导出使用密码保护</text><switch :checked="protectedBackup" :disabled="busy" @change="setProtection" /></label>
     <input v-model="password" password :maxlength="1024" :disabled="busy" placeholder="密码（导出至少 8 字符；恢复填原密码）" />
     <button :disabled="busy" :loading="busy" @click="exportFile('backup')">导出完整备份 JSON</button>

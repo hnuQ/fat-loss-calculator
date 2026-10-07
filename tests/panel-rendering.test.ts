@@ -23,7 +23,6 @@ async function trainingPanel() {
   return mountPanel("src/components/TrainingDiary.vue", {
     props: { snapshot: snapshot(), disabled: false },
     runtime: { trainingDiary: {
-      capability: () => ({ supported: false, message: "测试环境不支持系统提醒" }),
       open: async () => ({ ...state, warning: "" }),
       openWeek: async () => ({ days: weekDates.map((date) => ({ date, inCycle: true, records: date === record.date ? [record] : [] })) }),
       savePlan: async () => state, deletePlan: async () => state,
@@ -33,6 +32,29 @@ async function trainingPanel() {
     } },
   });
 }
+
+test("编辑训练时改变日期保留原记录及草稿", async () => {
+  let saved: any;
+  const state = { plans: [plan], records: [record], reminder: { enabled: false, weekdays: [], time: "" } };
+  const panel = await mountPanel("src/components/TrainingDiary.vue", {
+    props: { snapshot: snapshot(), disabled: false },
+    runtime: { trainingDiary: {
+      open: async () => ({ ...state, warning: "" }),
+      openWeek: async () => ({ days: weekDates.map((date) => ({ date, inCycle: true, records: [] })) }),
+      saveRecord: async (input: any) => { saved = input; return snapshot(); },
+    } },
+  });
+  try {
+    await panel.click(`编辑训练记录 ${record.id}`);
+    const picker = panel.all().find((el) => el.props.mode === "date");
+    picker!.props.onChange({ detail: { value: "2026-10-03" } });
+    await panel.flush();
+    expect(panel.text()).toContain("编辑训练记录");
+    expect(panel.text()).toContain(record.content);
+    await panel.click("保存训练修改");
+    expect(saved).toMatchObject({ id: record.id, date: "2026-10-03", content: record.content, bodyParts: record.bodyParts });
+  } finally { panel.dispose(); }
+});
 
 test("训练面板只保留实际记录：没有排期、完成开关与重复名称输入，可直接选择训练计划", async () => {
   const panel = await trainingPanel();
@@ -108,106 +130,6 @@ test("同名训练计划在记录表单中按部位与内容区分，选择后�
     await panel.flush();
     expect(panel.text()).toContain("实力推 3 组");
     expect(panel.text()).toContain("本周期暂无训练记录");
-  } finally {
-    panel.dispose();
-  }
-});
-
-function ringingStatus(overrides: Record<string, unknown> = {}) {
-  return { ringing: false, ringerMode: "normal", alarmVolume: 7, alarmVolumeMax: 7, dnd: false, blockers: [], unverified: [], ringtoneFallback: false, ...overrides };
-}
-
-async function ringingPanel(options: { ring?: Record<string, unknown>; mode?: string; sound?: string; enabled?: boolean } = {}) {
-  const enabled = options.enabled ?? true;
-  const state = { plans: [plan], records: [record], reminder: { enabled, mode: options.mode ?? "ring", weekdays: [1], time: "18:30", ...(options.sound ? { sound: options.sound } : {}) } };
-  return mountPanel("src/components/TrainingDiary.vue", {
-    props: { snapshot: snapshot(), disabled: false },
-    runtime: { trainingDiary: {
-      capability: () => ({ supported: true, message: "已允许准时提醒，系统限制仍可能延迟。", ...(options.ring ? { ring: options.ring } : {}) }),
-      open: async () => ({ ...state, warning: "" }),
-      openWeek: async () => ({ days: weekDates.map((date) => ({ date, inCycle: true, records: [] })) }),
-      savePlan: async () => state, deletePlan: async () => state,
-      saveRecord: async () => snapshot(), deleteRecord: async () => snapshot(),
-      saveReminder: async () => state, requestExactPermission: async () => {},
-      listRingtones: async () => [{ id: "1", title: "晨曦", uri: "content://ringtone/1" }],
-      previewSound: async () => {}, stopPreview: async () => {}, stopRinging: async () => {},
-    } },
-  });
-}
-
-test("响铃模式提供铃声选择、试听与停止，并如实说明会打断其他音频", async () => {
-  const panel = await ringingPanel({ ring: ringingStatus() });
-  try {
-    const text = panel.text();
-    expect(text).toContain("提醒方式");
-    expect(text).toContain("短暂打断其他音频");
-    expect(text).toContain("响铃铃声：系统默认闹钟铃声");
-    expect(text).toContain("试听最多 3 秒");
-    expect(text).toContain("停止试听");
-    expect(text).toContain("当前闹钟音量 7/7。");
-    const modeButtons = panel.all().filter((el) => String(el.props["aria-label"] ?? "").startsWith("提醒方式"));
-    expect(modeButtons.map((el) => el.props["aria-label"])).toEqual(["提醒方式普通通知", "提醒方式响铃提醒"]);
-    const picker = panel.all().find((el) => Array.isArray(el.props.range) && el.props.range.includes("系统默认闹钟铃声"));
-    expect(picker?.props.range).toEqual(["系统默认闹钟铃声", "晨曦"]);
-  } finally {
-    panel.dispose();
-  }
-});
-
-test("静音或音量为零等阻碍如实显示，不宣称可以响铃", async () => {
-  const panel = await ringingPanel({ ring: ringingStatus({ ringerMode: "silent", blockers: ["silent"] }) });
-  try {
-    expect(panel.text()).toContain("当前不会主动响铃：手机处于静音或振动模式。");
-    expect(panel.text()).not.toContain("当前闹钟音量");
-  } finally {
-    panel.dispose();
-  }
-});
-
-test("读不到系统状态时如实说明未知，不显示可用", async () => {
-  const panel = await ringingPanel({ ring: ringingStatus({ ringerMode: "unknown", blockers: ["state-unknown"] }) });
-  try {
-    expect(panel.text()).toContain("当前不会主动响铃：无法读取系统响铃状态。");
-  } finally {
-    panel.dispose();
-  }
-});
-
-test("普通通知模式与不支持响铃的一端都不显示铃声与试听", async () => {
-  const notification = await ringingPanel({ mode: "notification", ring: ringingStatus() });
-  try {
-    expect(notification.text()).toContain("提醒方式");
-    expect(notification.text()).not.toContain("响铃铃声：");
-    expect(notification.text()).not.toContain("试听最多 3 秒");
-    expect(notification.text()).not.toContain("短暂打断其他音频");
-  } finally {
-    notification.dispose();
-  }
-  const unsupported = await ringingPanel({ mode: "notification" });
-  try {
-    expect(unsupported.text()).not.toContain("提醒方式");
-    expect(unsupported.text()).not.toContain("响铃提醒");
-  } finally {
-    unsupported.dispose();
-  }
-});
-
-test("正在响铃时训练页显示停止入口，点击只结束本次", async () => {
-  const panel = await ringingPanel({ ring: ringingStatus({ ringing: true }) });
-  try {
-    expect(panel.text()).toContain("正在响铃");
-    expect(panel.text()).toContain("最多 10 秒后自动停止");
-    await panel.click("停止响铃");
-    expect(panel.text()).toContain("已停止本次响铃，下周安排保留");
-  } finally {
-    panel.dispose();
-  }
-});
-test("读不到勿扰状态时如实说明无法确认，不宣称没有阻碍", async () => {
-  const panel = await ringingPanel({ ring: ringingStatus({ unverified: ["dnd"] }) });
-  try {
-    expect(panel.text()).toContain("无法确认：勿扰模式已开启。");
-    expect(panel.text()).not.toContain("响铃提醒可用。");
   } finally {
     panel.dispose();
   }

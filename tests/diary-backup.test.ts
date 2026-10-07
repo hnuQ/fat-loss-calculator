@@ -16,7 +16,7 @@ async function fixture() {
   let today = "2026-10-02";
   const clock = { today: () => today, now: () => `${today}T12:00:00+08:00` };
   const diary = createFatLossDiary({ repository, clock, platform: { kind: "test", localPersistence: true, canvas: true } });
-  const training = createTrainingDiary({ repository, clock, diary, reminders: { capability: () => ({ supported: true, message: "测试" }), requestPermission: async () => true, replace: async () => {} } });
+  const training = createTrainingDiary({ repository, clock, diary });
   await diary.establishProfile({ ...profile, userTarget: { carbohydrateGrams: 100, proteinGrams: 100, fatGrams: 50 } });
   await diary.saveMeal({ mealSlot: "breakfast", foodId: diary.searchFoods("燕麦")[0].id, amount: 100 });
   await diary.saveBodyRecord({ measurements: { weightKg: 65, waistCm: 80 } });
@@ -33,9 +33,9 @@ async function fixture() {
   const legacy = (await repository.read())!;
   legacy.training!.schedules = [{ id: "legacy-schedule", ownerId: "local-user", cycleId, date: today, title: "旧排期名称", content: "旧排期内容", bodyParts: ["胸", "肩"], createdAt: `${today}T08:00:00.000Z`, updatedAt: `${today}T08:00:00.000Z`, revision: 1, syncState: "local" }];
   legacy.training!.records[0].scheduleId = "legacy-schedule";
+  legacy.training!.reminder = { enabled: true, mode: "notification", weekdays: [1, 3], time: "18:30" };
   await repository.write(validateBackupState(legacy));
   await training.deletePlan(plan.id);
-  await training.saveReminder({ enabled: true, mode: "notification", weekdays: [1, 3], time: "18:30" });
   today = "2026-10-03";
   const state = (await repository.read())!;
   await diary.correctMeal({ id: state.meals[0].id, amount: 140, reason: "数量录入错误" });
@@ -52,6 +52,19 @@ function rechecksum(file: Record<string, unknown>) {
   file.checksum = bytesToHex(sha256(utf8ToBytes(JSON.stringify({ format, version, schemaVersion, createdAt, migration, state }))));
   return JSON.stringify(file);
 }
+
+it("旧排期关联的实际记录改日期后仍能备份往返及导出", async () => {
+  const { repository, diary, clock, backup } = await fixture();
+  const before = (await repository.read())!;
+  const record = before.training!.records[0];
+  const training = createTrainingDiary({ repository, clock, diary });
+  await training.saveRecord({ id: record.id, cycleId: record.cycleId, date: "2026-10-03", content: record.content, bodyParts: record.bodyParts, feeling: record.feeling });
+  const exported = await backup.exportBackup();
+  await backup.restoreBackup(exported);
+  expect((await repository.read())!.training!.schedules).toEqual(before.training!.schedules);
+  expect((await repository.read())!.training!.records[0]).toMatchObject({ id: record.id, date: "2026-10-03", scheduleId: record.scheduleId });
+  expect(await backup.exportCsv("training")).toContain("2026-10-03");
+});
 
 describe("完整备份恢复公开旅程", () => {
   it("不依赖 TextEncoder 的跨端 UTF-8 编解码保留中文、emoji、换行和零字节", () => {

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+export { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { parse, compileScript } from "vue/compiler-sfc";
 import ts from "typescript";

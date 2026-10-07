@@ -29,7 +29,7 @@ async function setup() {
   const diary = createFatLossDiary({ repository, clock, platform: { kind: "test", localPersistence: true, canvas: true } });
   await diary.establishProfile({ nickname: "测试", sex: "male", age: 30, heightCm: 175, currentWeightKg: 70, weeklyExercise: "medium", hasFatLossExperience: false });
   const snapshot = await diary.startCycle({ startDate: cycleStart, dayType: "training" });
-  const training = createTrainingDiary({ repository, clock, diary, reminders: { capability: () => ({ supported: false, message: "" }), requestPermission: async () => false, replace: async () => {} } });
+  const training = createTrainingDiary({ repository, clock, diary });
   return { repository, clock, diary, training, cycleId: snapshot.activeCycle!.id, day: (date: string) => { today = date; } };
 }
 
@@ -137,7 +137,7 @@ it("旧排期与旧实际记录在完整备份中保全，CSV 不把旧排期当
   expect(exported.state.training.records).toMatchObject([{ id: "old-linked", scheduleId: "old-schedule", title: "旧实际名称" }]);
   const target = createInMemoryDiaryRepository();
   await createDiaryBackup({ repository: target, randomBytes: (length) => new Uint8Array(length) }).restoreBackup(await backup.exportBackup());
-  const reopened = createTrainingDiary({ repository: target, clock, diary, reminders: { capability: () => ({ supported: false, message: "" }), requestPermission: async () => false, replace: async () => {} } });
+  const reopened = createTrainingDiary({ repository: target, clock, diary });
   expect((await reopened.open()).records).toMatchObject([{ id: "old-linked", scheduleId: "old-schedule" }]);
   const csvText = await backup.exportCsv("training");
   expect(csvText).not.toContain("旧排期名称");

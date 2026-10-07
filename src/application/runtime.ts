@@ -4,7 +4,6 @@ import { uniPlatformCapabilities } from "../infrastructure/uniPlatformCapabiliti
 import { createFatLossDiary } from "./fatLossDiary";
 import { createFoodLibrary } from "./foodLibrary";
 import { createTrainingDiary } from "./trainingDiary";
-import { createUniTrainingReminders } from "../infrastructure/uniTrainingReminders";
 import { createDiaryBackup } from "./diaryBackup";
 import { secureRandomBytes } from "../infrastructure/uniBackupFiles";
 
@@ -18,5 +17,4 @@ export const fatLossDiary = createFatLossDiary({
   platform: uniPlatformCapabilities,
 });
 
-export const trainingReminders = createUniTrainingReminders();
-export const trainingDiary = createTrainingDiary({ repository, clock: systemClock, diary: fatLossDiary, reminders: trainingReminders });
+export const trainingDiary = createTrainingDiary({ repository, clock: systemClock, diary: fatLossDiary });

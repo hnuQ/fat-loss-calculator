@@ -1,3 +1,6 @@
+export function readFileSync(path: string, encoding: "utf8"): string;
+export function existsSync(path: string): boolean;
+
 export type PanelControls = {
   flush(): Promise<void>;
   all(): Array<{ type: string; text: string; value: string; props: Record<string, any>; children: unknown[] }>;

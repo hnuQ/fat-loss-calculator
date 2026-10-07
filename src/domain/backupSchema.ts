@@ -43,7 +43,7 @@ export const diaryStateSchema = z.object({
   mealGroups: z.array(group).optional(), mealCorrections: z.array(mealCorrection).optional(),
   bodyRecords: z.array(body).optional(), bodyCorrections: z.array(bodyCorrection).optional(),
   bodyOverrides: z.array(bodyOverride).optional(),
-  training: z.object({ plans: z.array(trainingPlan), records: z.array(trainingRecord), schedules: z.array(trainingSchedule).optional(), reminder }).strict().optional(),
+  training: z.object({ plans: z.array(trainingPlan), records: z.array(trainingRecord), schedules: z.array(trainingSchedule).optional(), reminder: reminder.optional() }).strict().optional(),
 }).strict();
 
 export function validateBackupState(input: unknown): DiaryState {
@@ -74,7 +74,7 @@ export function validateBackupState(input: unknown): DiaryState {
   const scheduleIds = new Set<string>();
   for (const record of state.training?.records ?? []) {
     if (!record.scheduleId) continue;
-    if (scheduleIds.has(record.scheduleId) || !state.training?.schedules?.some((schedule) => schedule.id === record.scheduleId && schedule.cycleId === record.cycleId && schedule.date === record.date)) throw new Error("备份训练排期与实际记录关联无效");
+    if (scheduleIds.has(record.scheduleId) || !state.training?.schedules?.some((schedule) => schedule.id === record.scheduleId && schedule.cycleId === record.cycleId)) throw new Error("备份训练排期与实际记录关联无效");
     scheduleIds.add(record.scheduleId);
   }
   for (const [sources, corrections, sourceKey] of [[state.meals, state.mealCorrections ?? [], "sourceMealId"], [state.bodyRecords ?? [], state.bodyCorrections ?? [], "sourceBodyId"]] as const) {

@@ -41,16 +41,15 @@ describe("归档周期删除与放纵日", () => {
     await expect(diary.setIndulgenceDay({ cycleId, date: "2026-10-06", enabled: true })).rejects.toThrow("只能查看");
   });
 
-  it("删除完整关联记录和纠错，保留其他周期、食材、餐次、模板和独立提醒", async () => {
+  it("删除完整关联记录和纠错，保留其他周期、食材、餐次、模板和旧兼容数据", async () => {
     const { diary, repository, clock, cycleId, setToday } = await journey();
     const backup = createDiaryBackup({ repository, randomBytes });
-    const training = createTrainingDiary({ repository, diary, clock, reminders: { capability: () => ({ supported: true, message: "测试" }), requestPermission: async () => true, replace: async () => {} } });
+    const training = createTrainingDiary({ repository, diary, clock });
     const foods = createFoodLibrary({ repository });
     const custom = await foods.saveCustomFood({ name: "测试食材", basis: "per100g", carbohydrateGrams: 20, proteinGrams: 10, fatGrams: 5 });
     await foods.toggleFavorite(custom.id);
     await diary.addMealGroup("测试餐次");
     const plan = (await training.savePlan({ title: "训练模板", content: "自填内容" })).plans[0];
-    await training.saveReminder({ enabled: true, mode: "notification", weekdays: [1, 3], time: "18:30" });
     await training.saveRecord({ cycleId, date: "2026-10-04", planId: plan.id, content: plan.content, feeling: "完成" });
     await diary.setIndulgenceDay({ cycleId, date: "2026-10-04", enabled: true });
     const meal = (await diary.saveMeal({ foodId: custom.id, amount: 100, mealSlot: "breakfast" })).meals[0];
